@@ -1,93 +1,112 @@
 # 封包掉包遊戲 · Packet Drop
 
-> A multiplayer classroom game that turns a team of 6 players into a **TCP connection** — they *become* the packets, feel what happens when packets arrive out of order or get corrupted, and physically perform the retransmission handshake that makes TCP reliable.
+**Languages:** English · [繁體中文](README.zh-TW.md)
 
-Built for **SITCON Camp 2026**. Next.js 14 + Prisma 5 + SQLite. Phone-friendly, no install for players (just a URL).
+> **TL;DR** — A team of 6 players *becomes* one TCP connection. The game chops a puzzle into 6 numbered packets, scatters them across the players' phones in random order, and lets a facilitator "corrupt" some of them. To win, the team must **reassemble the packets in order** and **recover from packet loss together** — feeling, by hand, exactly how TCP delivers data reliably over an unreliable network.
 
----
-
-## 🎯 What players are meant to learn
-
-The whole game is a hands-on analogy for **how TCP delivers data reliably over an unreliable network**. By the end, players should *feel* — not just memorize — these four ideas:
-
-| TCP concept | How the game makes them feel it |
-|-------------|--------------------------------|
-| **Fragmentation / Segmentation** | A single message (the puzzle) is too big to send at once, so it's split into **6 packets**. No single player can solve the puzzle alone — each only holds one fragment. They must combine fragments to reconstruct the original message. |
-| **Out-of-order delivery** | Each player receives a *random* fragment (packet `03/06` might reach you before `01/06`). The shared notes start scrambled. Players must **reorder by sequence number** to rebuild the message correctly — exactly what a TCP receiver does with sequence numbers. |
-| **Packet loss & corruption** | The facilitator can "drop" packets mid-game. Affected fragments turn into garbled noise (`█▓▒░乱?#`). The data is now unreliable and unreadable. |
-| **Acknowledgement & retransmission (ACK)** | To recover a corrupted packet, **every player must press ACK**. Only when the whole team acknowledges does the data retransmit cleanly. This mirrors TCP's positive-acknowledgement-with-retransmission: the sender won't move on until it hears back. |
-
-The deeper takeaway: **reliability isn't free.** TCP achieves it through coordination overhead — sequence numbers, acknowledgements, and re-sends. The game makes that overhead something players do with their own hands and have to agree on as a group.
+Built for **SITCON Camp 2026**. Players just open a URL on their phone — no install. Up to 6 teams play in parallel.
 
 ---
 
-## 🕹️ Game flow
+## 🕹️ The core workflow (read this first)
 
-### Setup
-1. A facilitator opens the **admin panel** (`/admin`) on a projector.
-2. Players open the game URL on their phones and **enter their group number (1–6)**.
-3. Each player is **auto-assigned a seat (1–6)** — this is their "node" in the connection.
-4. Once enough players have joined, anyone can hit **Start** (or the facilitator force-starts).
+> **TL;DR** — Every round: each player receives **1 of 6 puzzle fragments** → taps **Import** to drop it into the team's shared notes → the team **drag-sorts** the scrambled fragments back into order `01→06` → reads the reassembled puzzle → submits **one team answer**. Do this 3 times (3 puzzles). A packet-loss event can interrupt at any time (see below).
 
-> 💡 A group is a TCP connection. The 6 seats are the byte-stream positions. There are up to 6 groups playing in parallel, each an independent connection.
+### What's actually happening
 
-### Each round = one puzzle = one "message" being transmitted
-
-The game has **3 rounds**, each a self-contained logic puzzle split into 6 packets:
-
-| Round | Puzzle | What they reconstruct |
-|-------|--------|----------------------|
-| **1 · 神秘顏色** | Deduce which color ball is in bags A/B/C/D | 1 intro packet + 4 clue packets + 1 question packet |
-| **2 · 神秘數字** | Find the mystery 3-digit number from clues | same 6-packet structure |
-| **3 · 職業推理** | Work out each person's profession | same 6-packet structure |
-
-Within a round, the loop is:
+A puzzle is one "message" that is too big to send in a single packet. The server **splits it into 6 fragments**, each tagged with a sequence number (`封包 01/06` … `封包 06/06`), and **scatters one fragment to each of the 6 seats in random order**. No single player can see the whole puzzle — they must pool and reorder their fragments to rebuild it.
 
 ```
-1. RECEIVE   Each player is handed ONE of the 6 fragments (randomly assigned).
-             → "My Packet" card shows e.g. 【封包 03/06】線索二：袋子 B 是綠色
-
-2. IMPORT    Each player taps "Import to Shared Notes".
-             → Their fragment joins the team's shared, collaborative note.
-             (Like packets arriving in the receive buffer.)
-
-3. REORDER   The shared notes arrive SCRAMBLED. The team drag-sorts the
-             fragments into correct order using the 封包 NN/06 sequence numbers.
-             → This rebuilds the original message: intro → clues → question.
-
-4. SOLVE     With the message reassembled, the team reads the full puzzle,
-             solves the logic problem together, and submits ONE team answer.
-
-5. ADVANCE   Facilitator moves the group to the next round (new puzzle).
+              SERVER  ── holds one 6-piece puzzle for this round
+                 │
+                 │  splits into 6 numbered fragments,
+                 │  scatters ONE to each seat at random
+                 ▼
+   ┌────────┬────────┬────────┬────────┬────────┬────────┐
+  Seat 1   Seat 2   Seat 3   Seat 4   Seat 5   Seat 6
+  封包03   封包01   封包05   封包02   封包06   封包04      ← each phone sees only ITS fragment
+   │        │        │        │        │        │
+   └────────┴──── every player taps "Import" ───┴────────┘
+                 │
+                 ▼
+        SHARED NOTES  ── fragments arrive SCRAMBLED (import order ≠ sequence order)
+        03 · 01 · 05 · 02 · 06 · 04
+                 │
+                 │  the team DRAG-SORTS by sequence number
+                 ▼
+        01 · 02 · 03 · 04 · 05 · 06   ── message is now readable: intro → clues → question
+                 │
+                 ▼
+        team SOLVES the puzzle together  →  submits ONE team answer  →  next round
 ```
 
-### ⚠️ The packet-loss event (the climax mechanic)
+### Step by step (one round)
 
-At any point during a round, the facilitator can **trigger a packet loss** on a group from the admin panel:
+| # | Step | Who | What happens on screen |
+|---|------|-----|------------------------|
+| 0 | **Distribute** | Server | When the round starts, the server hands each seat one fragment. Seat→fragment mapping is random *but stable* (a seeded shuffle), so it never reshuffles mid-round. |
+| 1 | **Receive** | Each player | Your phone's **"My Packet"** card shows your one fragment, e.g. `【封包 03/06】線索二：袋子 B 是綠色`. You can't see anyone else's. |
+| 2 | **Import** | Each player | Tap **Import to Shared Notes**. Your fragment is written into the team's shared note — now everyone on the team can see it. |
+| 3 | **Reorder** | Whole team | As fragments are imported they appear in the shared notes in *import* order, i.e. scrambled. The team **drag-sorts** them into `01→06` using the `封包 NN/06` labels. The notes sync every 2s, so everyone sees the same order. |
+| 4 | **Solve** | Whole team | Once ordered, the fragments read as a coherent message (intro → 4 clues → question). The team solves the logic puzzle and submits **one** answer for the whole team. |
+| 5 | **Advance** | Facilitator | Facilitator clicks **Next** → the server loads the next puzzle and the loop repeats. After round 3, the team sees a completion screen. |
 
-1. **Corruption hits.** A random 50–80% of the team's fragments turn into garbage characters. The puzzle becomes unsolvable — you literally can't read the corrupted clues.
-2. **A red ACK banner appears** for everyone, showing each player's ACK status.
-3. **Everyone must press ACK.** The banner tracks progress (`3/6 acknowledged`). It is **unanimous** — one player who hasn't ACKed blocks the whole retransmission.
-4. **Once all players ACK, the data retransmits** — corruption clears on the next sync, and the clean fragments come back.
+### Worked example — Round 1 「神秘顏色」
 
-This is the emotional core of the game: the team experiences that **a connection stalls until everyone acknowledges**, and that recovery requires the whole group, not just the affected players.
+The puzzle: four bags A/B/C/D each hold a ball of a different color (red/blue/yellow/green). The 6 fragments are:
 
-### Finishing
-After round 3 is submitted and the facilitator advances, the group sees a **completion screen**. Every group runs independently, so faster teams can finish while others are still mid-round.
+| Sequence | Fragment content |
+|----------|------------------|
+| `封包 01/06` | Intro: 4 bags, 4 colors, one each |
+| `封包 02/06` | Clue 1: bag A is *not* red, *not* blue |
+| `封包 03/06` | Clue 2: bag B *is* green |
+| `封包 04/06` | Clue 3: bag C is *not* yellow |
+| `封包 05/06` | Clue 4: bag D is *not* green, *not* yellow |
+| `封包 06/06` | The question + answer format |
+
+Each player gets one of these in random order. Only after the team imports all 6 and sorts them `01→06` does the chain of clues make sense — then they deduce **A=黃, B=綠, C=紅, D=藍** and submit it.
 
 ---
 
-## 🧩 Why the design choices map to real TCP
+## ⚠️ The packet-loss event (the climax mechanic)
 
-- **Sequence numbers** → the `封包 NN/06` labels. Reordering is only possible *because* each fragment is numbered, just as TCP uses byte sequence numbers to reassemble a stream.
-- **Random fragment delivery** → models the fact that the network gives **no ordering guarantee**; order is the receiver's job to restore.
-- **Shared collaborative notes** → the **receive buffer** where segments accumulate before being delivered "in order" to the application (the team's brain).
-- **Unanimous ACK** → an exaggerated, deliberately strict version of acknowledgement to make the coordination cost visceral. Real TCP ACKs are per-segment, but the *principle* — no progress without acknowledgement — is identical.
-- **Deterministic corruption** → corruption is computed from a seed, not re-randomized each poll, so a corrupted clue looks *stably* broken (not flickering). Pedagogically this matters: a dropped packet stays dropped until retransmitted.
+> **TL;DR** — The facilitator can "drop" packets on a team mid-round. Random fragments turn into garbage characters and the puzzle becomes unreadable. A red banner appears for **everyone**, and **every single player must tap ACK** before the data retransmits and the corruption clears. One person not ACKing blocks the whole team.
+
+What happens, in order:
+
+1. **Trigger.** The facilitator clicks **Loss** on a team. The server marks a random **50–80% of seats** as "affected."
+2. **Corruption appears.** On the next 2s sync, the affected fragments — both in the player's "My Packet" card *and* in the shared notes — turn into noise like `█▓▒░乱?#`. The clues are now unreadable, so the puzzle can't be solved.
+3. **Everyone must ACK.** A red banner pops up **for the whole team** (not just affected players), showing live progress like `3/6 acknowledged`. It is **unanimous** — every joined player must press **ACK**.
+4. **Retransmit.** When the *last* player ACKs, the server resolves the event. On the next sync the corruption clears and the clean fragments come back.
+
+This is the emotional core: the team feels that **a connection stalls until everyone acknowledges**, and that recovery is a *group* responsibility, not just the affected players'.
+
+---
+
+## 🎯 What players learn
+
+> **TL;DR** — Four TCP ideas, felt rather than memorized: data is **fragmented**, packets arrive **out of order**, packets can be **lost/corrupted**, and recovery needs **acknowledgement (ACK)**. The hidden lesson: *reliability costs coordination.*
+
+| TCP concept | The matching game mechanic |
+|-------------|----------------------------|
+| **Fragmentation** | The puzzle is too big for one packet, so it's split into 6. No one can solve it alone. |
+| **Out-of-order delivery** | Fragments arrive at random seats; the shared notes start scrambled and must be **reordered by sequence number** — exactly a TCP receiver's job. |
+| **Packet loss & corruption** | The facilitator drops packets; affected fragments become unreadable garbage. |
+| **ACK & retransmission** | Recovery requires **every** player to ACK before the data re-sends — TCP's "no progress without acknowledgement," made unanimous and physical. |
+
+**Why the analogy holds:**
+
+- **Sequence numbers** = the `封包 NN/06` labels. Reordering only works *because* each fragment is numbered — just like TCP byte sequence numbers.
+- **Random delivery** = the network gives no ordering guarantee; restoring order is the receiver's job.
+- **Shared notes** = the **receive buffer** where segments collect before being delivered in order to the "application" (the team's brain).
+- **Unanimous ACK** = a deliberately strict version of acknowledgement so the coordination cost is *felt*. Real ACKs are per-segment, but the principle — no progress without an ACK — is identical.
+- **Deterministic corruption** = corruption is computed from a fixed seed, so a dropped packet stays *stably* broken (no flicker) until retransmitted.
 
 ---
 
 ## 🚀 Running it
+
+> **TL;DR** — `pnpm install` → `npx prisma migrate dev` → `pnpm dev`, then players open `/` and the facilitator opens `/admin`.
 
 ```bash
 pnpm install
@@ -97,26 +116,28 @@ pnpm dev                             # http://localhost:3000
 
 | Route | Who | Purpose |
 |-------|-----|---------|
-| `/` | Players | Enter group number → auto-join → waiting lobby → start |
-| `/game/[teamNumber]?slot=N` | Players | The actual gameplay (fragment, notes, answer, ACK) |
-| `/admin` | Facilitator | Start games, trigger packet loss, advance rounds, reset |
+| `/` | Players | Enter group number → auto-assigned seat → waiting lobby → start |
+| `/game/[teamNumber]?slot=N` | Players | Gameplay: your packet, the shared notes, the answer box, the ACK banner |
+| `/admin` | Facilitator | Start games, trigger packet loss, advance rounds, reset a team or all teams |
 
 ### Facilitator playbook
-1. Project `/admin`.
-2. Have each table pick a group number; players join on their phones.
-3. Hit **Start** per group once everyone's in.
-4. Let them import → reorder → solve round 1.
-5. **Trigger a packet loss** on a group mid-round to teach the ACK mechanic — watch them realize they all have to press ACK.
+1. Project `/admin` on the screen.
+2. Each table picks a group number; players join on their phones (seats auto-assign).
+3. Hit **Start** for a team once everyone's in.
+4. Let them **import → reorder → solve** round 1.
+5. **Trigger a packet loss** mid-round to teach the ACK mechanic — watch them realize they *all* have to press ACK.
 6. **Next** to advance rounds. **Reset** (or **Reset All**) between sessions.
 
 ---
 
-## 🛠️ Tech notes
+## 🛠️ For developers
 
-- **No WebSockets** — clients poll every 2s with a skip-if-unchanged guard, so re-renders (and drag-sort DOM remeasures) only happen when data actually changes.
-- **Stateless fragment assignment** — which seat gets which fragment is derived from a seeded shuffle (`teamNumber`, `round`, `slot`), so it's reproducible without storing assignments.
-- See [`CLAUDE.md`](CLAUDE.md) for the full architecture, file map, and database schema.
+> **TL;DR** — Next.js 14 + Prisma 5 + SQLite. State syncs by 2s polling (no WebSockets). Fragment assignment and corruption are both deterministic (seeded), so nothing about who-gets-what needs to be stored. Full architecture is in [`CLAUDE.md`](CLAUDE.md).
+
+- **No WebSockets** — clients poll every 2s with a skip-if-unchanged guard, so re-renders (and drag-sort DOM remeasures) only happen when the data actually changes.
+- **Stateless fragment assignment** — which seat gets which fragment is derived from a seeded shuffle of `(teamNumber, round, slot)`, so it's reproducible without storing it.
+- See [`CLAUDE.md`](CLAUDE.md) for the architecture, file map, API list, and database schema.
 
 ---
 
-*Language: Traditional Chinese (繁體中文). UI chrome is bilingual; puzzle content is Chinese.*
+*Puzzle content is in Traditional Chinese (繁體中文); UI labels are bilingual. A Chinese version of this document is at [README.zh-TW.md](README.zh-TW.md).*
