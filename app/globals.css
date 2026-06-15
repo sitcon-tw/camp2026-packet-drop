@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #0b0d0f;
+  color: #e2e8f0;
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+  min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #161b22; }
+::-webkit-scrollbar-thumb { background: #252c38; border-radius: 2px; }
+
+/* Utility */
+.btn-primary {
+  @apply bg-net-cyan text-white font-bold py-3 px-6 rounded-lg
+         transition-colors duration-150 active:scale-95
+         hover:bg-blue-500
+         disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+.btn-danger {
+  @apply border border-net-red text-net-red font-bold py-3 px-6 rounded-lg
+         transition-colors duration-150 active:scale-95
+         hover:bg-net-red hover:text-white
+         disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+.btn-ghost {
+  @apply border border-net-wire text-slate-400 font-bold py-3 px-6 rounded-lg
+         transition-colors duration-150 active:scale-95
+         hover:border-net-cyan hover:text-net-cyan
+         disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+/* Corrupted fragment — GPU-safe (opacity only, no box-shadow anim) */
+.packet-corrupted {
+  font-family: ui-monospace, monospace;
+  color: #ef4444;
+  opacity: 0.85;
+}
