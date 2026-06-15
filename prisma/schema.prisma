@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id        Int       @id @default(autoincrement())
+  number    Int       @unique
+  status    String    @default("waiting")
+  round     Int       @default(0)
+  startedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  players    Player[]
+  notes      TeamNote[]
+  lossEvents PacketLossEvent[]
+}
+
+model Player {
+  id       Int      @id @default(autoincrement())
+  teamId   Int
+  team     Team     @relation(fields: [teamId], references: [id])
+  slot     Int
+  joinedAt DateTime @default(now())
+
+  @@unique([teamId, slot])
+}
+
+model TeamNote {
+  id        Int            @id @default(autoincrement())
+  teamId    Int
+  team      Team           @relation(fields: [teamId], references: [id])
+  round     Int
+  answer    String         @default("")
+  updatedAt DateTime       @updatedAt
+
+  fragments NoteFragment[]
+
+  @@unique([teamId, round])
+}
+
+model NoteFragment {
+  id          Int      @id @default(autoincrement())
+  noteId      Int
+  note        TeamNote @relation(fields: [noteId], references: [id])
+  slot        Int
+  origContent String
+  position    Int
+  importedAt  DateTime @default(now())
+
+  @@unique([noteId, slot])
+}
+
+model PacketLossEvent {
+  id            Int      @id @default(autoincrement())
+  teamId        Int
+  team          Team     @relation(fields: [teamId], references: [id])
+  round         Int
+  affectedSlots String   @default("[]")
+  ackSlots      String   @default("[]")
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+}
