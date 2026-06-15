@@ -24,8 +24,8 @@ export async function POST(
   if (!ackSlots.includes(slot)) ackSlots.push(slot)
 
   // Resolve if all players have ACK'd
-  const allSlots = team.players.map((p) => p.slot)
-  const allAcked = allSlots.every((s) => ackSlots.includes(s))
+  const allSlots = team.players.map((p: { slot: number }) => p.slot)
+  const allAcked = allSlots.every((s: number) => ackSlots.includes(s))
 
   await prisma.packetLossEvent.update({
     where: { id: activeEvent.id },

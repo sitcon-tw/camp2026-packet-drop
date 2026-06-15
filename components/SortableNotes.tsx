@@ -59,6 +59,7 @@ function SortableFragment({ frag }: { frag: NoteFragData }) {
     >
       {/* Drag handle */}
       <button
+        type="button"
         {...attributes}
         {...listeners}
         className="shrink-0 mt-0.5 text-slate-700 hover:text-slate-500 cursor-grab
@@ -102,7 +103,7 @@ type Props = {
 }
 
 export default function SortableNotes({ fragments, onSort }: Props) {
-  const sorted = [...fragments].sort((a, b) => a.position - b.position)
+  const sorted = fragments.toSorted((a, b) => a.position - b.position)
 
   const sensors = useSensors(
     useSensor(TouchSensor, {

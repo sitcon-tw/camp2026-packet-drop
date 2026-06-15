@@ -23,8 +23,8 @@ export async function POST(
   }
 
   // Randomly affect 50–80% of player slots (minimum 1)
-  const playerSlots = team.players.map((p) => p.slot)
-  const shuffled = [...playerSlots].sort(() => Math.random() - 0.5)
+  const playerSlots = team.players.map((p: { slot: number }) => p.slot)
+  const shuffled = playerSlots.toSorted(() => Math.random() - 0.5)
   const affectCount = Math.max(1, Math.floor(shuffled.length * (0.5 + Math.random() * 0.3)))
   const affectedSlots = shuffled.slice(0, affectCount)
 

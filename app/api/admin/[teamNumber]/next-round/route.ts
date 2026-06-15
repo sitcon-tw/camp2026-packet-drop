@@ -35,7 +35,7 @@ export async function POST(
       number: updated.number,
       status: updated.status,
       round: updated.round,
-      players: updated.players.map((p) => ({ slot: p.slot })),
+      players: updated.players.map((p: { slot: number }) => ({ slot: p.slot })),
     },
   })
 }

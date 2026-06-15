@@ -21,7 +21,7 @@ export async function POST(
     return NextResponse.json({ error: 'Game already started' }, { status: 409 })
   }
 
-  const taken = team.players.map((p) => p.slot)
+  const taken = team.players.map((p: { slot: number }) => p.slot)
   const available = [1, 2, 3, 4, 5, 6].filter((s) => !taken.includes(s))
 
   if (available.length === 0) {

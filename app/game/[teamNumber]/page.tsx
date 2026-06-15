@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import FragmentCard from '@/components/FragmentCard'
 import SortableNotes from '@/components/SortableNotes'
@@ -15,7 +15,7 @@ const TEAM_COLORS: Record<number, string> = {
   6: 'text-sky-400',
 }
 
-export default function GamePage() {
+function GamePageInner() {
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -27,12 +27,16 @@ export default function GamePage() {
   const [acking, setAcking] = useState(false)
   const [answerInput, setAnswerInput] = useState('')
   const [submittingAnswer, setSubmittingAnswer] = useState(false)
+  const [retransmitting, setRetransmitting] = useState(false)
+
   const pollRef = useRef<ReturnType<typeof setInterval>>()
   const fetchingRef = useRef(false)
   const prevJsonRef = useRef('')
+  const retransmittingRef = useRef(false)
+  const prevAckRef = useRef<{ id: number | null; round: number }>({ id: null, round: 0 })
 
   const fetchState = useCallback(async () => {
-    if (fetchingRef.current) return
+    if (retransmittingRef.current || fetchingRef.current) return
     fetchingRef.current = true
     try {
       const res = await fetch(`/api/game/${teamNumber}/state?slot=${mySlot}`)
@@ -41,6 +45,22 @@ export default function GamePage() {
       const json = JSON.stringify(data)
       if (json !== prevJsonRef.current) {
         prevJsonRef.current = json
+
+        // Detect ACK resolution: event was active, now resolved, same round
+        const prevAck = prevAckRef.current
+        const currAckId = data.activeAck?.id ?? null
+        const currRound = data.team.round
+        prevAckRef.current = { id: currAckId, round: currRound }
+
+        if (prevAck.id !== null && currAckId === null && prevAck.round === currRound) {
+          retransmittingRef.current = true
+          setRetransmitting(true)
+          setTimeout(() => {
+            retransmittingRef.current = false
+            setRetransmitting(false)
+          }, 3000)
+        }
+
         setGameState(data)
       }
     } finally {
@@ -127,6 +147,7 @@ export default function GamePage() {
           <div className="text-net-green font-black text-xl mb-1">遊戲完成</div>
           <p className="text-slate-500 text-sm mb-6">感謝參與 TCP 封包掉包體驗活動</p>
           <button
+            type="button"
             onClick={() => router.push('/')}
             className="px-5 py-2.5 border border-net-wire text-slate-400 rounded-lg text-sm
               hover:border-net-cyan hover:text-net-cyan transition-colors duration-150"
@@ -140,6 +161,26 @@ export default function GamePage() {
 
   return (
     <div className={`min-h-screen flex flex-col ${activeAck ? 'pb-28' : 'pb-6'}`}>
+
+      {/* 3-second retransmission freeze overlay */}
+      {retransmitting && (
+        <div className="fixed inset-0 z-50 bg-net-bg/95 flex flex-col items-center justify-center gap-4 animate-fade-in">
+          <div className="flex gap-1.5">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-net-cyan"
+                style={{ animationDelay: `${i * 0.12}s`, animation: 'pulse 0.6s ease-in-out infinite' }}
+              />
+            ))}
+          </div>
+          <div className="text-center">
+            <div className="text-lg font-black text-net-cyan tracking-wide">Retransmitting…</div>
+            <div className="text-[11px] font-mono text-slate-500 mt-1">封包重傳中，請稍候</div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-30 bg-net-bg border-b border-net-wire">
         <div className="max-w-2xl mx-auto px-4 h-12 flex items-center justify-between">
@@ -219,6 +260,7 @@ export default function GamePage() {
                   <input
                     type="text"
                     placeholder="輸入答案…"
+                    aria-label="Answer"
                     value={answerInput}
                     onChange={(e) => setAnswerInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
@@ -226,6 +268,7 @@ export default function GamePage() {
                       placeholder-slate-700 focus:outline-none focus:border-net-yellow"
                   />
                   <button
+                    type="button"
                     onClick={handleAnswer}
                     disabled={!answerInput.trim() || submittingAnswer}
                     className="h-9 px-4 bg-net-yellow text-net-bg font-bold text-xs rounded-md
@@ -252,5 +295,13 @@ export default function GamePage() {
         />
       )}
     </div>
+  )
+}
+
+export default function GamePage() {
+  return (
+    <Suspense>
+      <GamePageInner />
+    </Suspense>
   )
 }

@@ -46,23 +46,25 @@ export default function FragmentCard({
 
       {/* Footer action */}
       <div className={`px-3 py-2.5 border-t ${isCorrupted ? 'border-net-red/20' : 'border-net-wire'}`}>
-        {hasImported && !isCorrupted ? (
+        {isCorrupted ? (
+          <div className="text-[11px] font-mono text-net-red/70 text-center py-0.5">
+            ⚠ 封包損毀 — 全員按 ACK 重傳後可匯入
+          </div>
+        ) : hasImported ? (
           <div className="text-[11px] font-mono text-net-green text-center py-0.5">
             ✓ Imported to shared notes
           </div>
         ) : (
           <button
+            type="button"
             onClick={onImport}
             disabled={importing}
-            className={`w-full py-2.5 font-bold text-xs rounded-md uppercase tracking-wide
+            className="w-full py-2.5 font-bold text-xs rounded-md uppercase tracking-wide
               transition-colors duration-150 active:scale-95
-              ${isCorrupted
-                ? 'bg-transparent border border-net-red/40 text-net-red hover:bg-net-red/10'
-                : 'bg-net-cyan text-white hover:bg-blue-500'
-              }
-              disabled:opacity-50 disabled:cursor-not-allowed`}
+              bg-net-cyan text-white hover:bg-blue-500
+              disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {importing ? 'Importing…' : isCorrupted ? 'Import (Corrupted)' : 'Import to Shared Notes'}
+            {importing ? 'Importing…' : 'Import to Shared Notes'}
           </button>
         )}
       </div>

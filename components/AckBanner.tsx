@@ -29,6 +29,7 @@ export default function AckBanner({
             </div>
           </div>
           <button
+            type="button"
             onClick={onAck}
             disabled={myAcked || acking}
             className={`px-5 py-2.5 font-bold text-xs rounded-md uppercase tracking-wide

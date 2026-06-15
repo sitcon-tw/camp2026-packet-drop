@@ -1,11 +1,14 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { PUZZLES } from '@/lib/puzzles'
 
 type TeamSummary = {
   number: number
   status: string
   round: number
   players: { slot: number }[]
+  currentAnswer: string
+  hasActiveLoss: boolean
 }
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -18,6 +21,7 @@ export default function AdminPage() {
   const [teams, setTeams] = useState<TeamSummary[]>([])
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [resetAllConfirm, setResetAllConfirm] = useState(false)
+  const [showAnswers, setShowAnswers] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval>>()
 
   async function fetchAll() {
@@ -63,6 +67,30 @@ export default function AdminPage() {
 
       <div className="max-w-lg mx-auto px-4 py-5 flex flex-col gap-5">
 
+        {/* ── Answer Reference ── */}
+        <div className="bg-net-surface border border-net-wire rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowAnswers(p => !p)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-net-raised/40 transition-colors"
+          >
+            <span className="text-sm font-bold text-white">Answer Reference</span>
+            <span className="text-[10px] text-slate-500">{showAnswers ? '▲ hide' : '▼ show'}</span>
+          </button>
+          {showAnswers && (
+            <div className="border-t border-net-wire divide-y divide-net-wire/50">
+              {PUZZLES.map(p => (
+                <div key={p.round} className="px-4 py-3">
+                  <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">
+                    Round {p.round} · {p.title}
+                  </div>
+                  <div className="text-sm font-mono text-net-yellow break-all">{p.answer}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* ── Reset All ── */}
         <div className="bg-net-surface border border-net-wire rounded-lg overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-net-wire bg-net-raised">
@@ -81,6 +109,7 @@ export default function AdminPage() {
                 </p>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={handleResetAll}
                     disabled={busy.resetAll}
                     className="flex-1 h-9 bg-net-red text-white font-bold text-xs rounded-md
@@ -89,6 +118,7 @@ export default function AdminPage() {
                     {busy.resetAll ? 'Resetting…' : 'Yes, reset everything'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => setResetAllConfirm(false)}
                     className="flex-1 h-9 border border-net-wire text-slate-400 text-xs font-bold rounded-md
                       hover:border-slate-500 hover:text-slate-200 transition-colors"
@@ -99,6 +129,7 @@ export default function AdminPage() {
               </div>
             ) : (
               <button
+                type="button"
                 onClick={() => setResetAllConfirm(true)}
                 disabled={busy.resetAll}
                 className="w-full h-9 border border-net-red/50 text-net-red text-xs font-bold rounded-md
@@ -116,6 +147,7 @@ export default function AdminPage() {
           {teams.map(team => {
             const st = STATUS[team.status] ?? STATUS.waiting
             const isPlaying = team.status === 'playing'
+            const puzzle = PUZZLES.find(p => p.round === team.round)
             return (
               <div key={team.number} className="bg-net-surface border border-net-wire rounded-lg px-3 py-3">
                 <div className="flex items-center gap-3">
@@ -126,6 +158,11 @@ export default function AdminPage() {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${st.color}`}>
                         {isPlaying ? `Rnd ${team.round}/3` : st.label}
                       </span>
+                      {team.hasActiveLoss && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded text-net-red bg-net-red/10 animate-pulse">
+                          ACK pending
+                        </span>
+                      )}
                     </div>
                     {/* Slot indicators */}
                     <div className="flex gap-1">
@@ -143,6 +180,7 @@ export default function AdminPage() {
                   <div className="flex gap-1.5 shrink-0">
                     {team.status === 'waiting' && (
                       <button
+                        type="button"
                         onClick={() => doAction(`${team.number}-start`, () =>
                           fetch(`/api/team/${team.number}/start`, { method: 'POST' }).then(() => {}),
                         )}
@@ -156,16 +194,19 @@ export default function AdminPage() {
                     {isPlaying && (
                       <>
                         <button
+                          type="button"
                           onClick={() => doAction(`${team.number}-loss`, () =>
                             fetch(`/api/admin/${team.number}/trigger-loss`, { method: 'POST' }).then(() => {}),
                           )}
-                          disabled={busy[`${team.number}-loss`]}
+                          disabled={busy[`${team.number}-loss`] || team.hasActiveLoss}
+                          title={team.hasActiveLoss ? 'ACK event in progress' : 'Trigger packet loss'}
                           className="h-7 px-2 border border-net-red/50 text-net-red text-[11px] font-bold rounded-md
-                            hover:bg-net-red/10 transition-colors disabled:opacity-40"
+                            hover:bg-net-red/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           Loss
                         </button>
                         <button
+                          type="button"
                           onClick={() => doAction(`${team.number}-next`, () =>
                             fetch(`/api/admin/${team.number}/next-round`, { method: 'POST' }).then(() => {}),
                           )}
@@ -178,6 +219,7 @@ export default function AdminPage() {
                       </>
                     )}
                     <button
+                      type="button"
                       onClick={() => doAction(`${team.number}-reset`, () =>
                         fetch(`/api/admin/${team.number}/reset`, { method: 'POST' }).then(() => {}),
                       )}
@@ -189,6 +231,27 @@ export default function AdminPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Submitted answer */}
+                {isPlaying && team.currentAnswer && (
+                  <div className="mt-2 pt-2 border-t border-net-wire/50 flex items-start gap-2">
+                    <span className="text-[10px] font-mono text-slate-600 uppercase tracking-widest shrink-0 mt-0.5">
+                      Ans
+                    </span>
+                    <span className="text-[11px] font-mono text-net-yellow break-all flex-1">
+                      {team.currentAnswer}
+                    </span>
+                    {puzzle && (
+                      <span className={`text-[10px] font-mono shrink-0 mt-0.5
+                        ${team.currentAnswer.trim() === puzzle.answer.trim()
+                          ? 'text-net-green'
+                          : 'text-slate-600'
+                        }`}>
+                        {team.currentAnswer.trim() === puzzle.answer.trim() ? '✓' : '?'}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}

@@ -103,6 +103,7 @@ export default function Page() {
               <input
                 ref={inputRef}
                 type="number" min={1} max={6} placeholder="1 – 6"
+                aria-label="Group number"
                 value={groupInput}
                 onChange={e => { setGroupInput(e.target.value); setError('') }}
                 onKeyDown={e => e.key === 'Enter' && handleJoin()}
@@ -112,6 +113,7 @@ export default function Page() {
                   [&::-webkit-inner-spin-button]:appearance-none"
               />
               <button
+                type="button"
                 onClick={handleJoin}
                 disabled={joining || !groupInput}
                 className="h-10 px-4 bg-net-cyan text-white font-bold rounded-md text-sm
@@ -176,7 +178,7 @@ export default function Page() {
               <div>
                 <div className="text-[10px] text-slate-600 uppercase tracking-widest mb-2">Connected</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {[...lobbyPlayers].sort((a, b) => a - b).map(s => (
+                  {lobbyPlayers.toSorted((a, b) => a - b).map(s => (
                     <span key={s} className={`text-[11px] px-2 py-1 rounded border
                       ${s === mySlot
                         ? 'border-net-cyan/40 bg-net-cyan/5 text-net-cyan'
@@ -192,6 +194,7 @@ export default function Page() {
             {/* Start / force-start */}
             {allFilled ? (
               <button
+                type="button"
                 onClick={handleStart} disabled={starting}
                 className="w-full h-11 bg-net-green text-net-bg font-bold rounded-lg text-sm
                   hover:bg-emerald-400 transition-colors disabled:opacity-50"
@@ -208,6 +211,7 @@ export default function Page() {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={handleStart} disabled={starting}
                     className="flex-1 h-9 bg-net-orange text-net-bg font-bold text-xs rounded-md
                       hover:bg-amber-400 transition-colors disabled:opacity-50"
@@ -215,6 +219,7 @@ export default function Page() {
                     {starting ? '…' : '確認強制開始'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => setForceConfirm(false)}
                     className="flex-1 h-9 border border-net-wire text-slate-500 text-xs font-bold rounded-md
                       hover:border-slate-500 hover:text-slate-300 transition-colors"
@@ -225,6 +230,7 @@ export default function Page() {
               </div>
             ) : (
               <button
+                type="button"
                 onClick={() => setForceConfirm(true)}
                 className="w-full h-11 border border-net-wire text-slate-500 font-bold rounded-lg text-sm
                   hover:border-net-orange hover:text-net-orange transition-colors"

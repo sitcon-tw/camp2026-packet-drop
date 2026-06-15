@@ -83,7 +83,7 @@ export async function GET(
       number: team.number,
       status: team.status,
       round: team.round,
-      players: team.players.map((p) => ({ slot: p.slot })),
+      players: team.players.map((p: { slot: number }) => ({ slot: p.slot })),
     },
     mySlot: slot,
     myFragment,

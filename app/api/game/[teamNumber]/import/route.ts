@@ -15,11 +15,21 @@ export async function POST(
     return NextResponse.json({ error: 'Game not active' }, { status: 400 })
   }
 
+  // Block import when packet is corrupted
+  const activeEvent = await prisma.packetLossEvent.findFirst({
+    where: { teamId: team.id, round: team.round, resolvedAt: null },
+  })
+  if (activeEvent) {
+    const affectedSlots: number[] = JSON.parse(activeEvent.affectedSlots)
+    if (affectedSlots.includes(slot)) {
+      return NextResponse.json({ error: 'Packet corrupted — ACK required before import' }, { status: 409 })
+    }
+  }
+
   const puzzle = getPuzzleForRound(team.round)
   const fragIdx = getFragmentIndex(teamNumber, team.round, slot)
   const frag = puzzle.fragments[fragIdx]
 
-  // Get or create the team note for this round
   const note = await prisma.teamNote.upsert({
     where: { teamId_round: { teamId: team.id, round: team.round } },
     create: { teamId: team.id, round: team.round },
@@ -27,7 +37,7 @@ export async function POST(
     include: { fragments: true },
   })
 
-  const existingFrag = note.fragments.find((f) => f.slot === slot)
+  const existingFrag = note.fragments.find((f: { slot: number; position: number }) => f.slot === slot)
   const position = existingFrag ? existingFrag.position : note.fragments.length
 
   await prisma.noteFragment.upsert({
