@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getPuzzleForRound } from '@/lib/puzzles'
+import { getPuzzleForRound, getMergedFragments } from '@/lib/puzzles'
 import { getFragmentIndex, corruptText } from '@/lib/game-logic'
 
 export async function GET(
@@ -38,8 +38,9 @@ export async function GET(
   let myFragment = null
   if (slot >= 1 && slot <= 6 && team.status === 'playing') {
     const puzzle = getPuzzleForRound(team.round)
+    const merged = getMergedFragments(puzzle, team.players.length)
     const fragIdx = getFragmentIndex(teamNumber, team.round, slot, team.players.length)
-    const frag = puzzle.fragments[fragIdx]
+    const frag = merged[fragIdx]
     const isCorrupted = affectedSlots.includes(slot)
 
     myFragment = {

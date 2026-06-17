@@ -24,5 +24,21 @@ export async function POST(
     update: { answer },
   })
 
+  const nextRound = team.round + 1
+  const newStatus = nextRound > 3 ? 'finished' : 'playing'
+
+  if (nextRound <= 3) {
+    await prisma.teamNote.upsert({
+      where: { teamId_round: { teamId: team.id, round: nextRound } },
+      create: { teamId: team.id, round: nextRound },
+      update: {},
+    })
+  }
+
+  await prisma.team.update({
+    where: { id: team.id },
+    data: { round: nextRound, status: newStatus },
+  })
+
   return NextResponse.json({ ok: true, correct: true })
 }

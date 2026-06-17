@@ -125,3 +125,25 @@ export function getPuzzleForRound(round: number): Puzzle {
   if (!puzzle) throw new Error(`No puzzle for round ${round}`)
   return puzzle
 }
+
+// Merge 6 fragments into playerCount groups so all clues are distributed
+// regardless of team size. Groups are consecutive chunks sized as evenly
+// as possible (larger chunks first).
+export function getMergedFragments(puzzle: Puzzle, playerCount: number): Fragment[] {
+  const frags = puzzle.fragments
+  const n = Math.max(1, Math.min(playerCount, frags.length))
+  if (n === frags.length) return frags
+
+  const total = frags.length
+  const base = Math.floor(total / n)
+  const extra = total % n
+  const result: Fragment[] = []
+  let fi = 0
+  for (let i = 0; i < n; i++) {
+    const count = i < extra ? base + 1 : base
+    const group = frags.slice(fi, fi + count)
+    fi += count
+    result.push({ seqIndex: i, content: group.map((f) => f.content).join('\n\n') })
+  }
+  return result
+}
