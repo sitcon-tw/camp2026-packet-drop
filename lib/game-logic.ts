@@ -9,10 +9,12 @@ function seededShuffle(arr: number[], seed: number): number[] {
   return a
 }
 
-// Returns the fragment index (0–5) assigned to a given slot for a team+round
-export function getFragmentIndex(teamNumber: number, round: number, slot: number): number {
+// Returns the fragment index assigned to a given slot for a team+round.
+// playerCount controls how many fragments exist (defaults to 6 for backwards compat).
+export function getFragmentIndex(teamNumber: number, round: number, slot: number, playerCount = 6): number {
   const seed = teamNumber * 7919 + round * 997
-  const order = seededShuffle([0, 1, 2, 3, 4, 5], seed)
+  const indices = Array.from({ length: playerCount }, (_, i) => i)
+  const order = seededShuffle(indices, seed)
   return order[(slot - 1) % order.length]
 }
 

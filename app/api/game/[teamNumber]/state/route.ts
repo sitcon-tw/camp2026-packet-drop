@@ -38,7 +38,7 @@ export async function GET(
   let myFragment = null
   if (slot >= 1 && slot <= 6 && team.status === 'playing') {
     const puzzle = getPuzzleForRound(team.round)
-    const fragIdx = getFragmentIndex(teamNumber, team.round, slot)
+    const fragIdx = getFragmentIndex(teamNumber, team.round, slot, team.players.length)
     const frag = puzzle.fragments[fragIdx]
     const isCorrupted = affectedSlots.includes(slot)
 

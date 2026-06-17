@@ -27,9 +27,11 @@ function GamePageInner() {
   const [acking, setAcking] = useState(false)
   const [answerInput, setAnswerInput] = useState('')
   const [submittingAnswer, setSubmittingAnswer] = useState(false)
+  const [answerError, setAnswerError] = useState(false)
   const [retransmitting, setRetransmitting] = useState(false)
 
   const pollRef = useRef<ReturnType<typeof setInterval>>()
+  const retransmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchingRef = useRef(false)
   const prevJsonRef = useRef('')
   const retransmittingRef = useRef(false)
@@ -55,7 +57,7 @@ function GamePageInner() {
         if (prevAck.id !== null && currAckId === null && prevAck.round === currRound) {
           retransmittingRef.current = true
           setRetransmitting(true)
-          setTimeout(() => {
+          retransmitTimerRef.current = setTimeout(() => {
             retransmittingRef.current = false
             setRetransmitting(false)
           }, 3000)
@@ -75,7 +77,10 @@ function GamePageInner() {
   useEffect(() => {
     fetchState()
     pollRef.current = setInterval(fetchState, 2000)
-    return () => clearInterval(pollRef.current)
+    return () => {
+      clearInterval(pollRef.current)
+      if (retransmitTimerRef.current) clearTimeout(retransmitTimerRef.current)
+    }
   }, [fetchState])
 
   async function handleImport() {
@@ -113,11 +118,18 @@ function GamePageInner() {
   async function handleAnswer() {
     if (!answerInput.trim()) return
     setSubmittingAnswer(true)
-    await fetch(`/api/game/${teamNumber}/answer`, {
+    setAnswerError(false)
+    const res = await fetch(`/api/game/${teamNumber}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answer: answerInput }),
     })
+    if (!res.ok) {
+      setAnswerError(true)
+    } else {
+      prevJsonRef.current = ''
+      await fetchState()
+    }
     setSubmittingAnswer(false)
   }
 
@@ -256,27 +268,35 @@ function GamePageInner() {
                   {notes.answer}
                 </div>
               ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="輸入答案…"
-                    aria-label="Answer"
-                    value={answerInput}
-                    onChange={(e) => setAnswerInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
-                    className="flex-1 h-9 bg-black/40 border border-net-wire rounded-md px-3 text-sm text-slate-200
-                      placeholder-slate-700 focus:outline-none focus:border-net-yellow"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAnswer}
-                    disabled={!answerInput.trim() || submittingAnswer}
-                    className="h-9 px-4 bg-net-yellow text-net-bg font-bold text-xs rounded-md
-                      hover:bg-yellow-300 active:scale-95 transition-all duration-150
-                      disabled:opacity-40 shrink-0 uppercase tracking-wide"
-                  >
-                    {submittingAnswer ? '…' : 'Submit'}
-                  </button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="輸入答案…"
+                      aria-label="Answer"
+                      value={answerInput}
+                      onChange={(e) => { setAnswerInput(e.target.value); setAnswerError(false) }}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAnswer()}
+                      className={`flex-1 h-9 bg-black/40 border rounded-md px-3 text-sm text-slate-200
+                        placeholder-slate-700 focus:outline-none transition-colors
+                        ${answerError ? 'border-net-red focus:border-net-red' : 'border-net-wire focus:border-net-yellow'}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAnswer}
+                      disabled={!answerInput.trim() || submittingAnswer}
+                      className="h-9 px-4 bg-net-yellow text-net-bg font-bold text-xs rounded-md
+                        hover:bg-yellow-300 active:scale-95 transition-all duration-150
+                        disabled:opacity-40 shrink-0 uppercase tracking-wide"
+                    >
+                      {submittingAnswer ? '…' : 'Submit'}
+                    </button>
+                  </div>
+                  {answerError && (
+                    <div className="text-[11px] font-mono text-net-red">
+                      ✗ 答案錯誤，請再試一次
+                    </div>
+                  )}
                 </div>
               )}
             </div>

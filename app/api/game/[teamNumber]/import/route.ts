@@ -10,7 +10,10 @@ export async function POST(
   const { slot } = await req.json()
   const teamNumber = parseInt(params.teamNumber)
 
-  const team = await prisma.team.findUnique({ where: { number: teamNumber } })
+  const team = await prisma.team.findUnique({
+    where: { number: teamNumber },
+    include: { players: true },
+  })
   if (!team || team.status !== 'playing') {
     return NextResponse.json({ error: 'Game not active' }, { status: 400 })
   }
@@ -27,7 +30,7 @@ export async function POST(
   }
 
   const puzzle = getPuzzleForRound(team.round)
-  const fragIdx = getFragmentIndex(teamNumber, team.round, slot)
+  const fragIdx = getFragmentIndex(teamNumber, team.round, slot, team.players.length)
   const frag = puzzle.fragments[fragIdx]
 
   const note = await prisma.teamNote.upsert({
