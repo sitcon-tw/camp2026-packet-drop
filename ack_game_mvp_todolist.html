@@ -1,0 +1,119 @@
+
+<style>
+  :root { --gap: 10px; }
+  .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 1rem 0; }
+  .col-header { font-size: 13px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .col-header i { font-size: 15px; }
+  .task { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); padding: 8px 10px; margin-bottom: 6px; cursor: pointer; display: flex; align-items: flex-start; gap: 8px; transition: opacity 0.15s; }
+  .task:hover { border-color: var(--color-border-secondary); }
+  .task.done { opacity: 0.45; }
+  .task.done .task-label { text-decoration: line-through; }
+  .task-check { width: 16px; height: 16px; border: 1.5px solid var(--color-border-secondary); border-radius: 4px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; transition: all 0.1s; }
+  .task.done .task-check { background: var(--color-background-success); border-color: var(--color-border-success); }
+  .task.done .task-check i { display: block; }
+  .task-check i { font-size: 11px; color: var(--color-text-success); display: none; }
+  .task-label { font-size: 13px; color: var(--color-text-primary); line-height: 1.4; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-top: 4px; font-weight: 500; }
+  .tag-server { background: var(--color-background-info); color: var(--color-text-info); }
+  .tag-client { background: var(--color-background-warning); color: var(--color-text-warning); }
+  .tag-infra { background: var(--color-background-secondary); color: var(--color-text-secondary); }
+  .progress-bar-wrap { height: 4px; background: var(--color-background-secondary); border-radius: 4px; margin-bottom: 16px; }
+  .progress-bar-fill { height: 100%; border-radius: 4px; background: var(--color-text-success); transition: width 0.3s; }
+  .progress-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 6px; }
+</style>
+
+<h2 class="sr-only">ACK! 遊戲 MVP Todolist — 互動任務看板</h2>
+
+<div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+  <span style="font-size:14px; font-weight:500; color:var(--color-text-primary)">ACK! MVP Todolist</span>
+  <span style="font-size:12px; color:var(--color-text-secondary);" id="progress-text">0 / 0 完成</span>
+</div>
+<div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+
+<div class="board" id="board"></div>
+
+<script>
+const columns = [
+  {
+    id: 'infra',
+    label: 'Infra / 專案初始化',
+    icon: 'ti-package',
+    tasks: [
+      { id: 'i1', label: 'Bun monorepo 結構建立（server + client workspace）', tag: 'infra' },
+      { id: 'i2', label: '共用型別定義（RoomState, Fragment, Phase, PlayerView）', tag: 'infra' },
+      { id: 'i3', label: '訊息池 config（JSON/TOML，含所有 tunable params）', tag: 'infra' },
+    ]
+  },
+  {
+    id: 'server',
+    label: 'Server（Bun WS）',
+    icon: 'ti-server-2',
+    tasks: [
+      { id: 's1', label: 'Bun.serve WS 基礎：roomId 管理、player join/leave', tag: 'server' },
+      { id: 's2', label: '訊息選取 + 分割成 N fragments（含 seq，不暴露給 client）', tag: 'server' },
+      { id: 's3', label: '每輪 fragment shuffle + 每 fragment 獨立 corruption RNG', tag: 'server' },
+      { id: 's4', label: 'guarantee_first_corrupt flag 實作', tag: 'server' },
+      { id: 's5', label: '每輪 distribute：一對一發 inbox 給各 player', tag: 'server' },
+      { id: 's6', label: 'log_fragment intent 處理：clean 寫入 buffer，garbage reject', tag: 'server' },
+      { id: 's7', label: 'ACK barrier：arm_ack 收集、T_ack window、all-N 觸發 retransmit', tag: 'server' },
+      { id: 's8', label: '自動 arm idle player（AFK fallback，2 × T_ack）', tag: 'server' },
+      { id: 's9', label: 'submit intent：server 端 reconstructed === M 驗證', tag: 'server' },
+      { id: 's10', label: '斷線重連：resync 當前 RoomState（server authoritative）', tag: 'server' },
+      { id: 's11', label: '全量 broadcast RoomState snapshot（每次 state 變動）', tag: 'server' },
+    ]
+  },
+  {
+    id: 'client',
+    label: 'Client（Svelte 5）',
+    icon: 'ti-brand-svelte',
+    tasks: [
+      { id: 'c1', label: 'WS 連線 + roomId/playerId 管理（$effect lifecycle）', tag: 'client' },
+      { id: 'c2', label: '$state rune 持有 RoomState，WS broadcast patch 更新', tag: 'client' },
+      { id: 'c3', label: 'Lobby 頁：等待 N players ready', tag: 'client' },
+      { id: 'c4', label: 'Inspect 頁：顯示 inbox（clean or garbage）+ "Log my fragment" 按鈕', tag: 'client' },
+      { id: 'c5', label: 'Buffer 區：N slots 填充狀態（$derived collected count）', tag: 'client' },
+      { id: 'c6', label: 'ACK 按鈕：arm_ack intent + 倒數 T_ack 視覺 + allArmed $derived', tag: 'client' },
+      { id: 'c7', label: 'Assembly 頁：N fragment chips drag-to-order（last-write-wins）', tag: 'client' },
+      { id: 'c8', label: 'Submit 按鈕 + 錯誤提示（wrong_submit_penalty cooldown）', tag: 'client' },
+      { id: 'c9', label: 'Win 畫面 + 可選 scoring 顯示', tag: 'client' },
+      { id: 'c10', label: 'Toast：fragment logged / rejected / barrier fired', tag: 'client' },
+    ]
+  },
+];
+
+const tagClass = { server: 'tag-server', client: 'tag-client', infra: 'tag-infra' };
+const tagLabel = { server: 'server', client: 'client', infra: 'infra' };
+
+const state = {};
+columns.forEach(col => col.tasks.forEach(t => state[t.id] = false));
+
+function render() {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  const total = Object.keys(state).length;
+  const done = Object.values(state).filter(Boolean).length;
+  document.getElementById('progress-text').textContent = `${done} / ${total} 完成`;
+  document.getElementById('progress-bar').style.width = `${Math.round(done / total * 100)}%`;
+
+  columns.forEach(col => {
+    const div = document.createElement('div');
+    div.innerHTML = `<div class="col-header"><i class="ti ${col.icon}" aria-hidden="true"></i>${col.label}</div>`;
+    col.tasks.forEach(t => {
+      const task = document.createElement('div');
+      task.className = 'task' + (state[t.id] ? ' done' : '');
+      task.innerHTML = `
+        <div class="task-check"><i class="ti ti-check" aria-hidden="true"></i></div>
+        <div><div class="task-label">${t.label}</div><span class="tag ${tagClass[t.tag]}">${tagLabel[t.tag]}</span></div>
+      `;
+      task.addEventListener('click', () => {
+        state[t.id] = !state[t.id];
+        render();
+      });
+      div.appendChild(task);
+    });
+    board.appendChild(div);
+  });
+}
+
+render();
+</script>
