@@ -1,7 +1,25 @@
 node_modules
-.next
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
 .env
-prisma/dev.db
-prisma/dev.db-journal
-tsconfig.tsbuildinfo
-package-lock.json
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+# SQLite
+*.db
