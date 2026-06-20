@@ -46,6 +46,8 @@ export class Room {
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private afkTimer: ReturnType<typeof setTimeout> | null = null;
+	private redistTimer: ReturnType<typeof setTimeout> | null = null;
+	private roundTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(roomId: string) {
 		this.state = {
@@ -206,7 +208,7 @@ export class Room {
 				this.broadcastAll({ type: 'complete' });
 				this.broadcastState();
 			} else {
-				setTimeout(() => this.startGameRound(), 1500);
+				this.roundTimer = setTimeout(() => { this.roundTimer = null; this.startGameRound(); }, 1500);
 			}
 		} else {
 			this.submitCooldown.set(playerId, Date.now() + CONFIG.wrong_submit_penalty);
@@ -240,6 +242,8 @@ export class Room {
 			this.armTime.clear();
 			this.clearDisarmTimers();
 			if (this.afkTimer) { clearTimeout(this.afkTimer); this.afkTimer = null; }
+			if (this.redistTimer) { clearTimeout(this.redistTimer); this.redistTimer = null; }
+			if (this.roundTimer) { clearTimeout(this.roundTimer); this.roundTimer = null; }
 			return;
 		}
 		this.broadcastState();
@@ -288,6 +292,11 @@ export class Room {
 	}
 
 	private distributeFragments(): void {
+		const filledIds = new Set(this.state.buffer.map((b) => b.id));
+		if (filledIds.size >= this.state.totalFragments) {
+			this.enterAssemble();
+			return;
+		}
 		this.state.round++;
 		this.state.phase = 'inspect';
 		this.state.players.forEach((p) => {
@@ -298,7 +307,6 @@ export class Room {
 		this.clearDisarmTimers();
 		this.armTime.clear();
 
-		const filledIds = new Set(this.state.buffer.map((b) => b.id));
 		const unfilled = shuffle(this.internalFrags.filter((f) => !filledIds.has(f.id)));
 
 		this.state.players.forEach((player, i) => {
@@ -373,7 +381,7 @@ export class Room {
 			this.enterAssemble();
 		} else {
 			this.broadcastState();
-			setTimeout(() => this.distributeFragments(), 600);
+			this.redistTimer = setTimeout(() => { this.redistTimer = null; this.distributeFragments(); }, 600);
 		}
 	}
 

@@ -32,7 +32,8 @@
 	// ── WS lifecycle ─────────────────────────────────────────────
 	$effect(() => {
 		const host = window.location.hostname;
-		const url = `ws://${host}:8080/ws/${roomId}`;
+		const storedPid = sessionStorage.getItem(`pid:${roomId}`);
+		const url = `ws://${host}:8080/ws/${roomId}${storedPid ? `?pid=${storedPid}` : ''}`;
 		const socket = new WebSocket(url);
 		wsRef = socket;
 
@@ -45,6 +46,7 @@
 			switch (msg.type) {
 				case 'welcome':
 					playerId = msg.playerId as string;
+					sessionStorage.setItem(`pid:${roomId}`, playerId);
 					socket.send(JSON.stringify({ type: 'join' }));
 					break;
 				case 'state': {
@@ -70,9 +72,12 @@
 				case 'toast':
 					addToast(msg.text as string, msg.kind as string);
 					break;
-				case 'answer_wrong':
-					submitCooldownUntil = Date.now() + (msg.penalty as number);
+				case 'answer_wrong': {
+					const penalty = msg.penalty as number;
+					submitCooldownUntil = Date.now() + penalty;
+					setTimeout(() => { submitCooldownUntil = 0; }, penalty);
 					break;
+				}
 				case 'complete':
 					addToast('任務完成！', 'success');
 					break;

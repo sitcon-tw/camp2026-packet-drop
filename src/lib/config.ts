@@ -26,7 +26,7 @@ export const MESSAGE_POOL: MessageEntry[] = [
         { text: "WHAT CONFIRMS DATA WAS RECEIVED", answer: "ACKNOWLEDGEMENT" },
         { text: "WHAT FIELD DETECTS BIT ERRORS", answer: "CHECKSUM" },
         { text: "WHAT BREAKS DATA INTO SEGMENTS", answer: "FRAGMENTATION" },
-        { text: "WHAT WRAPS DATA WITH METADATA", answer: "header" },
+        { text: "WHAT WRAPS DATA WITH METADATA", answer: "HEADER" },
         { text: "WHAT PREVENTS DUPLICATE PACKETS", answer: "SEQUENCE NUMBER" },
         { text: "WHAT PROTOCOL IS CONNECTIONLESS", answer: "UDP" },
 ];

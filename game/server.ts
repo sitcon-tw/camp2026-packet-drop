@@ -1,5 +1,14 @@
 import { Room } from './room.js';
 
+const PORT = (() => {
+	const p = parseInt(Bun.env.WS_PORT ?? '8080');
+	if (isNaN(p) || p < 1 || p > 65535) {
+		console.error(`[ACK] Invalid WS_PORT: "${Bun.env.WS_PORT}"`);
+		process.exit(1);
+	}
+	return p;
+})();
+
 const rooms = new Map<string, Room>();
 
 function getRoom(roomId: string): Room {
@@ -12,17 +21,16 @@ interface WsData {
 	playerId: string;
 }
 
-Bun.serve<WsData>({
-	port: parseInt(Bun.env.WS_PORT ?? '8080'),
+const server = Bun.serve<WsData>({
+	port: PORT,
 
 	fetch(req, server) {
 		const url = new URL(req.url);
 		if (url.pathname.startsWith('/ws/')) {
-			const roomId = url.pathname.slice(4);
+			const roomId = url.pathname.slice(4).split('/')[0];
 			if (!roomId) return new Response('roomId required', { status: 400 });
-			const ok = server.upgrade(req, {
-				data: { roomId, playerId: crypto.randomUUID() },
-			});
+			const playerId = url.searchParams.get('pid') || crypto.randomUUID();
+			const ok = server.upgrade(req, { data: { roomId, playerId } });
 			return ok ? undefined : new Response('WS upgrade failed', { status: 500 });
 		}
 		return new Response('ACK! Game Server', { status: 200 });
@@ -56,6 +64,7 @@ Bun.serve<WsData>({
 					room.armAck(playerId);
 					break;
 				case 'set_order':
+					if (!Array.isArray(msg.order)) return;
 					room.setOrder(playerId, msg.order as string[]);
 					break;
 				case 'submit':
@@ -76,4 +85,11 @@ Bun.serve<WsData>({
 	},
 });
 
-console.log(`ACK! WS → ws://localhost:${Bun.env.WS_PORT ?? 8080}`);
+console.log(`ACK! WS → ws://localhost:${PORT}`);
+
+for (const sig of ['SIGINT', 'SIGTERM'] as NodeJS.Signals[]) {
+	process.on(sig, () => {
+		server.stop(true);
+		process.exit(0);
+	});
+}
