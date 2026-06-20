@@ -11,8 +11,9 @@
 	let toasts = $state<{ id: number; text: string; kind: string }[]>([]);
 	let submitCooldownUntil = $state(0);
 	let wsReady = $state(false);
+	let answerInput = $state('');
 
-	// Optimistic assembly order (mirrors server; updated immediately on drag)
+	// Drag state
 	let localOrder = $state<string[]>([]);
 	let dragFrom = $state<number | null>(null);
 
@@ -22,7 +23,7 @@
 	const me = $derived(room?.players.find((p) => p.id === playerId));
 	const cooldownActive = $derived(submitCooldownUntil > Date.now());
 	const armedCount = $derived(room?.players.filter((p) => p.isArmed).length ?? 0);
-	// Use local order if set (optimistic), otherwise fall back to server's order
+	// Always use server order (authoritative); localOrder is just used for optimistic rendering
 	const displayOrder = $derived(localOrder.length > 0 ? localOrder : (room?.assemblyOrder ?? []));
 	const assembled = $derived(
 		displayOrder.map((id) => room?.buffer.find((b) => b.id === id)?.content ?? '?').join('')
@@ -30,7 +31,6 @@
 
 	// ── WS lifecycle ─────────────────────────────────────────────
 	$effect(() => {
-		const name = localStorage.getItem('ack_player_name') ?? 'Player';
 		const host = window.location.hostname;
 		const url = `ws://${host}:8080/ws/${roomId}`;
 		const socket = new WebSocket(url);
@@ -45,17 +45,15 @@
 			switch (msg.type) {
 				case 'welcome':
 					playerId = msg.playerId as string;
-					socket.send(JSON.stringify({ type: 'join', playerName: name }));
+					socket.send(JSON.stringify({ type: 'join' }));
 					break;
 				case 'state': {
 					const r = msg.room as RoomState;
 					room = r;
-					// Sync local order from server when entering assemble fresh
-					if (r.phase === 'assemble' && localOrder.length === 0) {
+					// Always sync localOrder from server so all players see the same order
+					if (r.phase === 'assemble') {
 						localOrder = [...r.assemblyOrder];
-					}
-					// Clear local order when leaving assemble
-					if (r.phase !== 'assemble') {
+					} else {
 						localOrder = [];
 					}
 					break;
@@ -72,12 +70,11 @@
 				case 'toast':
 					addToast(msg.text as string, msg.kind as string);
 					break;
-				case 'submit_wrong':
+				case 'answer_wrong':
 					submitCooldownUntil = Date.now() + (msg.penalty as number);
-					addToast('答案錯誤！冷卻中…', 'error');
 					break;
-				case 'win':
-					addToast(`✓ 正確！`, 'success');
+				case 'complete':
+					addToast('任務完成！', 'success');
 					break;
 			}
 		};
@@ -90,12 +87,19 @@
 		return () => socket.close();
 	});
 
-	// Reset inbox only when round number advances (not on every room update)
+	// Reset inbox when entering a new inspect phase
 	let knownRound = $state(0);
 	$effect(() => {
 		if (room && room.phase === 'inspect' && room.round !== knownRound) {
 			knownRound = room.round;
 			inbox = null;
+		}
+	});
+
+	// Reset answer input when entering answer phase
+	$effect(() => {
+		if (room?.phase === 'answer') {
+			answerInput = '';
 		}
 	});
 
@@ -124,12 +128,19 @@
 		if (me?.isArmed) return;
 		send({ type: 'arm_ack' });
 	}
-	function submitAnswer() {
+	function submitOrder() {
 		if (cooldownActive) return;
 		send({ type: 'submit' });
 	}
+	function submitAnswer() {
+		if (cooldownActive || !answerInput.trim()) return;
+		send({ type: 'submit_answer', text: answerInput.trim() });
+	}
+	function onAnswerKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') submitAnswer();
+	}
 
-	// ── drag & drop ──────────────────────────────────────────────
+	// ── desktop drag & drop ──────────────────────────────────────
 	function ondragstart(e: DragEvent, index: number) {
 		dragFrom = index;
 		e.dataTransfer!.effectAllowed = 'move';
@@ -144,10 +155,34 @@
 		const next = [...displayOrder];
 		[next[dragFrom], next[index]] = [next[index], next[dragFrom]];
 		dragFrom = null;
-		localOrder = next; // optimistic update
-		send({ type: 'set_order', order: next }); // sync to server + others
+		localOrder = next;
+		send({ type: 'set_order', order: next });
 	}
 	function ondragend() {
+		dragFrom = null;
+	}
+
+	// ── mobile touch drag ────────────────────────────────────────
+	function ontouchstart(e: TouchEvent, index: number) {
+		dragFrom = index;
+	}
+	function ontouchmove(e: TouchEvent) {
+		e.preventDefault(); // block scroll while dragging
+	}
+	function ontouchend(e: TouchEvent) {
+		if (dragFrom === null) return;
+		const touch = e.changedTouches[0];
+		const el = document.elementFromPoint(touch.clientX, touch.clientY);
+		const chip = el?.closest('[data-drag-index]') as HTMLElement | null;
+		if (chip) {
+			const targetIndex = parseInt(chip.dataset.dragIndex ?? '-1');
+			if (targetIndex >= 0 && targetIndex !== dragFrom) {
+				const next = [...displayOrder];
+				[next[dragFrom], next[targetIndex]] = [next[targetIndex], next[dragFrom]];
+				localOrder = next;
+				send({ type: 'set_order', order: next });
+			}
+		}
 		dragFrom = null;
 	}
 </script>
@@ -164,7 +199,7 @@
 		<h2>等待玩家加入</h2>
 
 		<ul class="player-list">
-			{#each room.players as p}
+			{#each room.players as p (p.id)}
 				<li class:me={p.id === playerId}>
 					<span class="dot" class:on={p.isReady}></span>
 					<span>{p.name}</span>
@@ -179,13 +214,13 @@
 		{:else}
 			<p class="muted center">等待其他玩家就緒…</p>
 		{/if}
-		<p class="hint">需要 ≥2 位玩家</p>
+		<p class="hint">需要 ≥{room.maxRounds > 0 ? 3 : 2} 位玩家，共 {room.maxRounds} 輪</p>
 	</div>
 
 {:else if room.phase === 'inspect'}
 	<!-- ── INSPECT ── -->
 	<div class="panel">
-		<div class="room-badge">ROUND {room.round}</div>
+		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · INSPECT</div>
 		<h2>Inspect Inbox</h2>
 
 		<div class="inbox-box" class:corrupt={inbox?.isCorrupt}>
@@ -208,17 +243,15 @@
 			</button>
 		</div>
 
-		<!-- Buffer -->
 		<div class="section-label">Buffer {room.buffer.length}/{room.totalFragments}</div>
 		<div class="buffer-row">
-			{#each Array(room.totalFragments) as _, i}
+			{#each Array(room.totalFragments) as _, i (i)}
 				<div class="buf-slot" class:filled={!!room.buffer[i]}>
 					{room.buffer[i] ? '▓' : '░'}
 				</div>
 			{/each}
 		</div>
 
-		<!-- ACK bar -->
 		<div class="section-label">
 			ACK {armedCount}/{room.players.length}
 			<span class="hint-inline">（3 秒 window，同時按下才觸發）</span>
@@ -230,9 +263,8 @@
 			></div>
 		</div>
 
-		<!-- Player list -->
 		<ul class="player-mini">
-			{#each room.players as p}
+			{#each room.players as p (p.id)}
 				<li class:me={p.id === playerId}>
 					<span class="dot sm" class:on={p.isArmed}></span>
 					{p.name}
@@ -246,21 +278,26 @@
 {:else if room.phase === 'assemble'}
 	<!-- ── ASSEMBLE ── -->
 	<div class="panel">
+		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · ASSEMBLE</div>
 		<h2>Assemble</h2>
-		<p class="sub">拖曳排列封包 → 重組訊息</p>
+		<p class="sub">拖曳排列封包 → 重組問題</p>
 
 		<div class="frag-list">
-			{#each displayOrder as id, i}
+			{#each displayOrder as id, i (id)}
 				{@const b = room.buffer.find((buf) => buf.id === id)}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="frag-chip"
 					class:dragging={dragFrom === i}
 					draggable="true"
+					data-drag-index={i}
 					ondragstart={(e) => ondragstart(e, i)}
 					ondragover={ondragover}
 					ondrop={(e) => ondrop(e, i)}
 					ondragend={ondragend}
+					ontouchstart={(e) => ontouchstart(e, i)}
+					ontouchmove={ontouchmove}
+					ontouchend={ontouchend}
 				>
 					<span class="chip-n">{i + 1}</span>
 					<span class="chip-content mono">{b?.content ?? '?'}</span>
@@ -274,26 +311,52 @@
 			<span class="mono preview-text">{assembled}</span>
 		</div>
 
-		<button class="btn primary wide" onclick={submitAnswer} disabled={cooldownActive}>
-			{cooldownActive ? '冷卻中…' : 'SUBMIT'}
+		<button class="btn primary wide" onclick={submitOrder} disabled={cooldownActive}>
+			{cooldownActive ? '冷卻中…' : '確認排列'}
 		</button>
 
 		<ul class="player-mini" style="margin-top:1rem">
-			{#each room.players as p}
+			{#each room.players as p (p.id)}
 				<li class:me={p.id === playerId}>{p.name}</li>
 			{/each}
 		</ul>
 	</div>
 
-{:else if room.phase === 'win'}
-	<!-- ── WIN ── -->
-	<div class="panel win">
-		<div class="trophy">🏆</div>
-		<h2>{room.winnerName} 獲勝！</h2>
-		{#if room.winnerName === me?.name}
-			<p class="you-won">你贏了！</p>
-		{/if}
-		<p class="answer mono">{room.buffer.map((b) => b.content).join('')}</p>
+{:else if room.phase === 'answer'}
+	<!-- ── ANSWER ── -->
+	<div class="panel">
+		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · ANSWER</div>
+		<h2>回答問題</h2>
+
+		<div class="question-box">
+			<span class="mono large">{room.currentQuestion}</span>
+		</div>
+
+		<div class="answer-row">
+			<input
+				class="answer-input"
+				bind:value={answerInput}
+				placeholder="輸入答案…"
+				onkeydown={onAnswerKeydown}
+			/>
+			<button class="btn primary" onclick={submitAnswer} disabled={cooldownActive || !answerInput.trim()}>
+				{cooldownActive ? '冷卻中…' : 'SUBMIT'}
+			</button>
+		</div>
+
+		<ul class="player-mini" style="margin-top:1.5rem">
+			{#each room.players as p (p.id)}
+				<li class:me={p.id === playerId}>{p.name}</li>
+			{/each}
+		</ul>
+	</div>
+
+{:else if room.phase === 'complete'}
+	<!-- ── COMPLETE ── -->
+	<div class="panel complete">
+		<div class="complete-icon">✓</div>
+		<h2>任務完成！</h2>
+		<p class="complete-sub">隊伍成功完成 {room.maxRounds} 輪協議重建</p>
 		<a href="/" class="btn primary wide" style="text-align:center;text-decoration:none">
 			再玩一局
 		</a>
@@ -331,7 +394,7 @@
 		margin: 0 auto;
 		padding: 1.5rem 1rem 3rem;
 	}
-	.win {
+	.complete {
 		text-align: center;
 		padding-top: 5rem;
 	}
@@ -411,6 +474,39 @@
 	.large {
 		font-size: 1.05rem;
 		line-height: 1.4;
+	}
+
+	/* Question box */
+	.question-box {
+		background: #0c1020;
+		border: 1px solid #2a3a6a;
+		border-radius: 8px;
+		padding: 1.5rem 1.25rem;
+		margin-bottom: 1.25rem;
+		text-align: center;
+		word-break: break-all;
+	}
+
+	/* Answer input */
+	.answer-row {
+		display: flex;
+		gap: 0.6rem;
+		margin-bottom: 0.75rem;
+	}
+	.answer-input {
+		flex: 1;
+		background: #0a0a0f;
+		border: 1px solid #2a2a4a;
+		border-radius: 6px;
+		color: #dde;
+		font-family: inherit;
+		font-size: 0.95rem;
+		padding: 0.65rem 0.9rem;
+		outline: none;
+		transition: border-color 0.15s;
+	}
+	.answer-input:focus {
+		border-color: #7af;
 	}
 
 	/* Actions */
@@ -546,6 +642,7 @@
 		align-items: center;
 		gap: 0.7rem;
 		user-select: none;
+		touch-action: none;
 		transition: background 0.1s, border-color 0.1s;
 	}
 	.frag-chip:hover {
@@ -584,21 +681,17 @@
 		color: #7af;
 	}
 
-	/* Win */
-	.trophy {
+	/* Complete */
+	.complete-icon {
 		font-size: 4rem;
+		color: #4e4;
 		margin-bottom: 0.5rem;
+		font-family: monospace;
 	}
-	.you-won {
-		color: #7f7;
-		font-size: 1rem;
-		margin: 0 0 0.5rem;
-	}
-	.answer {
-		color: #7af;
-		font-size: 1.05rem;
-		margin: 0.5rem 0 2rem;
-		word-break: break-all;
+	.complete-sub {
+		color: #556;
+		font-size: 0.9rem;
+		margin: 0 0 2rem;
 	}
 
 	/* Toasts */

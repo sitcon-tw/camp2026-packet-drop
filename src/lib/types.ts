@@ -1,4 +1,4 @@
-export type Phase = 'lobby' | 'inspect' | 'assemble' | 'win';
+export type Phase = 'lobby' | 'inspect' | 'assemble' | 'answer' | 'complete';
 
 // Client-visible fragment: NO slot field (slot = the ordering puzzle)
 export interface Fragment {
@@ -26,12 +26,13 @@ export interface RoomState {
 	roomId: string;
 	phase: Phase;
 	round: number;
+	gameRound: number;
+	maxRounds: number;
 	players: Player[];
 	buffer: BufferItem[];
 	totalFragments: number;
-	assemblyOrder: string[]; // IDs in current team arrangement (server-synced)
-	winner: string | null;
-	winnerName: string | null;
+	assemblyOrder: string[];
+	currentQuestion: string | null;
 }
 
 export type ClientMsg =
@@ -39,8 +40,8 @@ export type ClientMsg =
 	| { type: 'ready' }
 	| { type: 'log_fragment' }
 	| { type: 'arm_ack' }
-	| { type: 'set_order'; order: string[] } // opaque IDs, reordered
-	| { type: 'submit' }
+	| { type: 'set_order'; order: string[] }
+	| { type: 'submit_answer'; text: string }
 	| { type: 'resync' };
 
 export type ServerMsg =
@@ -49,7 +50,7 @@ export type ServerMsg =
 	| { type: 'inbox'; fragment: Fragment }
 	| { type: 'log_ok' }
 	| { type: 'log_reject'; reason: string }
-	| { type: 'submit_wrong'; penalty: number }
-	| { type: 'win'; message: string }
+	| { type: 'answer_wrong'; penalty: number }
+	| { type: 'complete' }
 	| { type: 'error'; message: string }
 	| { type: 'toast'; text: string; kind: 'info' | 'success' | 'error' };

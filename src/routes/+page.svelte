@@ -1,23 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	let playerName = $state('');
-	let roomCode = $state('');
-	let error = $state('');
+	const TEAM_COUNT = 10;
+	const teams = Array.from({ length: TEAM_COUNT }, (_, i) => String(i + 1).padStart(2, '0'));
 
-	function join() {
-		const name = playerName.trim();
-		if (!name) {
-			error = '請輸入名字';
-			return;
-		}
-		const room = roomCode.trim().toUpperCase() || crypto.randomUUID().slice(0, 6).toUpperCase();
-		localStorage.setItem('ack_player_name', name);
-		goto(`/game/${room}`);
+	function join(team: string) {
+		goto(`/game/${team}`);
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') join();
+	function onkeydown(e: KeyboardEvent, team: string) {
+		if (e.key === 'Enter' || e.key === ' ') join(team);
 	}
 </script>
 
@@ -26,29 +18,23 @@
 		<h1>ACK!</h1>
 		<p class="sub">封包掉落 · 多人網路協議遊戲</p>
 
-		<div class="fields">
-			<input
-				bind:value={playerName}
-				placeholder="玩家名稱"
-				maxlength="20"
-				{onkeydown}
-				autofocus
-			/>
-			<input
-				bind:value={roomCode}
-				placeholder="房間代碼（空白 = 新房間）"
-				maxlength="8"
-				{onkeydown}
-			/>
+		<p class="label">選擇隊伍編號</p>
+		<div class="team-grid">
+			{#each teams as team}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="team-btn"
+					role="button"
+					tabindex="0"
+					onclick={() => join(team)}
+					onkeydown={(e) => onkeydown(e, team)}
+				>
+					{team}
+				</div>
+			{/each}
 		</div>
 
-		{#if error}
-			<p class="error">{error}</p>
-		{/if}
-
-		<button class="btn-primary" onclick={join}>加入 / 建立房間</button>
-
-		<p class="hint">需要 2 位以上玩家才能開始</p>
+		<p class="hint">需要 3 位以上隊員才能開始 · 共 3 輪</p>
 	</div>
 </main>
 
@@ -75,7 +61,7 @@
 		border-radius: 12px;
 		padding: 2.5rem 2rem;
 		width: 100%;
-		max-width: 360px;
+		max-width: 420px;
 		text-align: center;
 	}
 
@@ -92,58 +78,45 @@
 		color: #666;
 	}
 
-	.fields {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		margin-bottom: 1rem;
+	.label {
+		margin: 0 0 0.75rem;
+		font-size: 0.78rem;
+		color: #556;
+		letter-spacing: 0.08em;
 	}
 
-	input {
+	.team-grid {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 0.5rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.team-btn {
 		background: #0a0a0f;
 		border: 1px solid #2a2a3a;
-		border-radius: 6px;
-		color: #e0e0e0;
-		font-family: inherit;
-		font-size: 0.95rem;
-		padding: 0.65rem 0.9rem;
-		width: 100%;
-		box-sizing: border-box;
-		outline: none;
-		transition: border-color 0.15s;
-	}
-
-	input:focus {
-		border-color: #7bf;
-	}
-
-	.error {
-		color: #f77;
-		font-size: 0.8rem;
-		margin: 0 0 0.75rem;
-	}
-
-	.btn-primary {
-		background: #7bf;
-		border: none;
-		border-radius: 6px;
-		color: #000;
+		border-radius: 8px;
+		color: #99b;
 		cursor: pointer;
 		font-family: inherit;
-		font-size: 0.95rem;
+		font-size: 1.1rem;
 		font-weight: 700;
-		padding: 0.7rem 1.5rem;
-		width: 100%;
-		transition: opacity 0.15s;
+		letter-spacing: 0.05em;
+		padding: 0.9rem 0;
+		transition: background 0.12s, border-color 0.12s, color 0.12s;
 	}
 
-	.btn-primary:hover {
-		opacity: 0.85;
+	.team-btn:hover,
+	.team-btn:focus {
+		background: #1a1a2e;
+		border-color: #7bf;
+		color: #7bf;
+		outline: none;
 	}
 
 	.hint {
 		color: #555;
 		font-size: 0.75rem;
-		margin: 1rem 0 0;
+		margin: 0;
 	}
 </style>

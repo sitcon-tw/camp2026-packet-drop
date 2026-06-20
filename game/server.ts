@@ -44,7 +44,7 @@ Bun.serve<WsData>({
 			}
 			switch (msg.type) {
 				case 'join':
-					room.addPlayer(playerId, String(msg.playerName ?? 'Player'), ws as never);
+					room.addPlayer(playerId, ws as never);
 					break;
 				case 'ready':
 					room.setReady(playerId);
@@ -59,7 +59,10 @@ Bun.serve<WsData>({
 					room.setOrder(playerId, msg.order as string[]);
 					break;
 				case 'submit':
-					room.submit(playerId);
+					room.submitOrder(playerId);
+					break;
+				case 'submit_answer':
+					room.submitAnswer(playerId, String(msg.text ?? ''));
 					break;
 				case 'resync':
 					room.resync(playerId);
