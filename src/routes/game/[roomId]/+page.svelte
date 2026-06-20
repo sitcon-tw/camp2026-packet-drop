@@ -219,7 +219,7 @@
 		{:else}
 			<p class="muted center">等待其他玩家就緒…</p>
 		{/if}
-		<p class="hint">需要 ≥{room.maxRounds > 0 ? 3 : 2} 位玩家，共 {room.maxRounds} 輪</p>
+		<p class="hint">需要 ≥{room.minPlayers} 位玩家，共 {room.maxRounds} 輪</p>
 	</div>
 
 {:else if room.phase === 'inspect'}

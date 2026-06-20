@@ -56,6 +56,7 @@ export class Room {
 			round: 0,
 			gameRound: 0,
 			maxRounds: CONFIG.max_rounds,
+			minPlayers: CONFIG.min_players,
 			players: [],
 			buffer: [],
 			totalFragments: 0,
@@ -217,7 +218,9 @@ export class Room {
 		}
 	}
 
-	removePlayer(playerId: string): void {
+	removePlayer(playerId: string, ws: WS): void {
+		// Guard against stale close events: if a newer WS already replaced this one, skip.
+		if (this.wsMap.get(playerId) !== ws) return;
 		this.wsMap.delete(playerId);
 		if (this.state.phase === 'lobby') {
 			this.state.players = this.state.players.filter((p) => p.id !== playerId);
@@ -230,6 +233,7 @@ export class Room {
 				round: 0,
 				gameRound: 0,
 				maxRounds: CONFIG.max_rounds,
+				minPlayers: CONFIG.min_players,
 				players: [],
 				buffer: [],
 				totalFragments: 0,

@@ -80,7 +80,7 @@ const server = Bun.serve<WsData>({
 		},
 
 		close(ws) {
-			rooms.get(ws.data.roomId)?.removePlayer(ws.data.playerId);
+			rooms.get(ws.data.roomId)?.removePlayer(ws.data.playerId, ws as never);
 		},
 	},
 });

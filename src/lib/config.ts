@@ -8,7 +8,7 @@ export const CONFIG = {
         guarantee_first_corrupt: process.env["GUARANTEE_CORRUPT"] !== "false",
         corruption_chance: parseFloat(process.env["CORRUPTION_CHANCE"] ?? "0.4"),
         corrupt_chars: "▓░█▒■□▪▫●○◆◇✕✗",
-        min_players: parseInt(process.env["MIN_PLAYERS"] ?? "3"),
+        min_players: parseInt(process.env["MIN_PLAYERS"] ?? "5"),
         max_rounds: parseInt(process.env["MAX_ROUNDS"] ?? "3"),
 };
 

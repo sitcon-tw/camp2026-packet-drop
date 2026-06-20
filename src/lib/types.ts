@@ -28,6 +28,7 @@ export interface RoomState {
 	round: number;
 	gameRound: number;
 	maxRounds: number;
+	minPlayers: number;
 	players: Player[];
 	buffer: BufferItem[];
 	totalFragments: number;
