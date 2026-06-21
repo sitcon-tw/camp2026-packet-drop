@@ -31,9 +31,12 @@
 
 	// ── WS lifecycle ─────────────────────────────────────────────
 	$effect(() => {
-		const host = window.location.hostname;
 		const storedPid = sessionStorage.getItem(`pid:${roomId}`);
-		const url = `ws://${host}:8080/ws/${roomId}${storedPid ? `?pid=${storedPid}` : ''}`;
+		const url = new URL(`/ws/${roomId}`, window.location.origin);
+		url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		if (storedPid) {
+			url.searchParams.set('pid', storedPid);
+		}
 		const socket = new WebSocket(url);
 		wsRef = socket;
 
