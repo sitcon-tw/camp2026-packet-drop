@@ -1,0 +1,15 @@
+.git
+.gitignore
+.next
+.opencode
+.pnpm-store
+.svelte-kit
+.vscode
+build
+memory
+node_modules
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
