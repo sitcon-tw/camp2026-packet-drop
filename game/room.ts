@@ -1,5 +1,5 @@
-import type { Fragment, Player, RoomState, BufferItem } from '../src/lib/types.js';
-import { CONFIG, MESSAGE_POOL, type MessageEntry } from '../src/lib/config.js';
+import type { Fragment, Player, RoomState } from '../src/lib/types.js';
+import { CONFIG, MAX_ROUNDS, Q1_POOL, Q2_POOL, type Question } from '../src/lib/config.js';
 
 interface InternalFrag {
 	id: string;
@@ -16,7 +16,8 @@ interface PlayerInbox {
 
 function corrupt(s: string): string {
 	const c = CONFIG.corrupt_chars;
-	return [...s].map(() => c[Math.floor(Math.random() * c.length)]).join('');
+	const len = Math.max(s.length, 4);
+	return Array.from({ length: len }, () => c[Math.floor(Math.random() * c.length)]).join('');
 }
 
 function splitText(text: string, n: number): string[] {
@@ -33,12 +34,16 @@ function shuffle<T>(arr: T[]): T[] {
 	return a;
 }
 
+function normalize(s: string): string {
+	return s.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 type WS = { send(data: string): void; readyState: number };
 
 export class Room {
 	state: RoomState;
-	private roundMessages: MessageEntry[] = [];
-	private currentMessage: MessageEntry = { text: '', answer: '' };
+	private questions: Question[] = [];
+	private currentMessage: Question | null = null;
 	private internalFrags: InternalFrag[] = [];
 	private playerInboxes = new Map<string, PlayerInbox>();
 	private wsMap = new Map<string, WS>();
@@ -50,19 +55,7 @@ export class Room {
 	private roundTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(roomId: string) {
-		this.state = {
-			roomId,
-			phase: 'lobby',
-			round: 0,
-			gameRound: 0,
-			maxRounds: CONFIG.max_rounds,
-			minPlayers: CONFIG.min_players,
-			players: [],
-			buffer: [],
-			totalFragments: 0,
-			assemblyOrder: [],
-			currentQuestion: null,
-		};
+		this.state = this.freshState(roomId);
 	}
 
 	// ── Public API ────────────────────────────────────────────────
@@ -87,6 +80,7 @@ export class Room {
 			hasLogged: false,
 			isArmed: false,
 			isAfk: false,
+			wantsRestart: false,
 		});
 		this.broadcastState();
 	}
@@ -104,28 +98,36 @@ export class Room {
 		}
 	}
 
-	logFragment(playerId: string): void {
+	// Player transcribes the fragment they (briefly) saw into the shared notes.
+	// Content is NOT validated — it's a collaborative scratchpad. Only corrupt
+	// fragments are rejected, since the player literally cannot read them.
+	logFragment(playerId: string, text: string): void {
 		if (this.state.phase !== 'inspect') return;
 		const p = this.findPlayer(playerId);
-		if (!p || p.hasLogged) return;
-		p.hasLogged = true;
+		if (!p) return;
 
 		const inbox = this.playerInboxes.get(playerId);
 		if (!inbox) return;
 
 		if (inbox.isCorrupt) {
 			this.send(playerId, { type: 'log_reject', reason: 'CORRUPT' });
-			this.send(playerId, { type: 'toast', text: '封包損毀，已拒絕', kind: 'error' });
-		} else {
-			if (!this.state.buffer.find((b) => b.id === inbox.fragId)) {
-				this.state.buffer.push({ id: inbox.fragId, content: inbox.content });
-			}
-			this.send(playerId, { type: 'log_ok' });
-			this.send(playerId, { type: 'toast', text: '封包已記錄 ✓', kind: 'success' });
+			this.send(playerId, { type: 'toast', text: '封包損毀，無法記錄 — 請 ACK 重傳', kind: 'error' });
+			return;
 		}
 
-		if (this.state.buffer.length >= this.state.totalFragments) {
-			this.enterAssemble();
+		const note = text.trim();
+		if (!note) {
+			this.send(playerId, { type: 'error', message: '請先輸入內容' });
+			return;
+		}
+
+		p.hasLogged = true;
+		this.state.buffer[inbox.slot] = note;
+		this.send(playerId, { type: 'log_ok' });
+		this.send(playerId, { type: 'toast', text: '已記錄到共享筆記 ✓', kind: 'success' });
+
+		if (this.filledCount() >= this.state.totalFragments) {
+			this.enterAnswer();
 		} else {
 			this.broadcastState();
 		}
@@ -160,61 +162,44 @@ export class Room {
 		}
 	}
 
-	setOrder(playerId: string, order: string[]): void {
-		if (this.state.phase !== 'assemble') return;
-		const ids = new Set(this.state.buffer.map((b) => b.id));
-		if (order.length !== ids.size || !order.every((id) => ids.has(id))) return;
-		this.state.assemblyOrder = order;
-		this.broadcastState();
-	}
-
-	// Submit sorted order → if correct, move to answer phase
-	submitOrder(playerId: string): void {
-		if (this.state.phase !== 'assemble') return;
-		const coolUntil = this.submitCooldown.get(playerId) ?? 0;
-		if (Date.now() < coolUntil) {
-			this.send(playerId, { type: 'error', message: '提交冷卻中' });
-			return;
-		}
-
-		const reconstructed = this.state.assemblyOrder
-			.map((id) => this.state.buffer.find((b) => b.id === id)?.content ?? '')
-			.join('');
-
-		if (reconstructed === this.currentMessage.text) {
-			this.enterAnswer();
-		} else {
-			this.submitCooldown.set(playerId, Date.now() + CONFIG.wrong_submit_penalty);
-			this.send(playerId, { type: 'answer_wrong', penalty: CONFIG.wrong_submit_penalty });
-			this.send(playerId, { type: 'toast', text: '排列順序錯誤，冷卻中…', kind: 'error' });
-		}
-	}
-
-	// Submit text answer → if correct, advance round or complete
+	// Submit text answer → if correct, advance question or complete
 	submitAnswer(playerId: string, text: string): void {
-		if (this.state.phase !== 'answer') return;
+		if (this.state.phase !== 'answer' || !this.currentMessage) return;
 		const coolUntil = this.submitCooldown.get(playerId) ?? 0;
 		if (Date.now() < coolUntil) {
 			this.send(playerId, { type: 'error', message: '提交冷卻中' });
 			return;
 		}
 
-		const normalized = text.trim().toUpperCase();
-		const expected = this.currentMessage.answer.toUpperCase();
-
-		if (normalized === expected) {
+		if (normalize(text) === normalize(this.currentMessage.answer)) {
 			this.broadcastAll({ type: 'toast', text: `✓ 答對了！`, kind: 'success' });
-			if (this.state.gameRound >= this.state.maxRounds) {
+			if (this.state.gameRound >= MAX_ROUNDS) {
 				this.state.phase = 'complete';
 				this.broadcastAll({ type: 'complete' });
 				this.broadcastState();
 			} else {
-				this.roundTimer = setTimeout(() => { this.roundTimer = null; this.startGameRound(); }, 1500);
+				this.roundTimer = setTimeout(() => {
+					this.roundTimer = null;
+					this.startGameRound();
+				}, 1500);
 			}
 		} else {
 			this.submitCooldown.set(playerId, Date.now() + CONFIG.wrong_submit_penalty);
 			this.send(playerId, { type: 'answer_wrong', penalty: CONFIG.wrong_submit_penalty });
 			this.send(playerId, { type: 'toast', text: '答案錯誤，冷卻中…', kind: 'error' });
+		}
+	}
+
+	// Restart the CURRENT question — requires every player to agree.
+	voteRestart(playerId: string): void {
+		if (this.state.phase !== 'answer') return;
+		const p = this.findPlayer(playerId);
+		if (!p) return;
+		p.wantsRestart = true;
+		if (this.state.players.length > 0 && this.state.players.every((pl) => pl.wantsRestart)) {
+			this.restartQuestion();
+		} else {
+			this.broadcastState();
 		}
 	}
 
@@ -227,20 +212,10 @@ export class Room {
 		}
 		// Reset to lobby when no one is connected (room reuse between sessions)
 		if (this.wsMap.size === 0) {
-			this.state = {
-				roomId: this.state.roomId,
-				phase: 'lobby',
-				round: 0,
-				gameRound: 0,
-				maxRounds: CONFIG.max_rounds,
-				minPlayers: CONFIG.min_players,
-				players: [],
-				buffer: [],
-				totalFragments: 0,
-				assemblyOrder: [],
-				currentQuestion: null,
-			};
-			this.roundMessages = [];
+			this.state = this.freshState(this.state.roomId);
+			this.questions = [];
+			this.currentMessage = null;
+			this.internalFrags = [];
 			this.playerInboxes.clear();
 			this.submitCooldown.clear();
 			this.armTime.clear();
@@ -270,35 +245,75 @@ export class Room {
 
 	// ── Private ───────────────────────────────────────────────────
 
+	private freshState(roomId: string): RoomState {
+		return {
+			roomId,
+			phase: 'lobby',
+			round: 0,
+			gameRound: 0,
+			maxRounds: MAX_ROUNDS,
+			minPlayers: CONFIG.min_players,
+			players: [],
+			buffer: [],
+			totalFragments: 0,
+			revealMs: CONFIG.reveal_ms,
+			questionType: null,
+			prompt: null,
+		};
+	}
+
 	private startGame(): void {
-		const pool = shuffle([...MESSAGE_POOL]);
-		this.roundMessages = pool.slice(0, CONFIG.max_rounds);
+		const q1 = shuffle([...Q1_POOL])[0];
+		const q2 = shuffle([...Q2_POOL])[0];
+		this.questions = [q1, q2];
 		this.state.gameRound = 0;
 		this.startGameRound();
 	}
 
 	private startGameRound(): void {
 		this.state.gameRound++;
-		this.currentMessage = this.roundMessages[this.state.gameRound - 1];
+		this.currentMessage = this.questions[this.state.gameRound - 1];
+		const q = this.currentMessage;
 		const n = this.state.players.length;
-		const parts = splitText(this.currentMessage.text, n);
+
+		// Build the fragments to distribute (ephemeral, transcribed from memory).
+		const parts = q.type === 'sentence' ? splitText(q.sentence, n) : [...q.clues];
 		this.internalFrags = parts.map((cleanContent, slot) => ({
 			id: crypto.randomUUID(),
 			slot,
 			cleanContent,
 		}));
-		this.state.totalFragments = n;
-		this.state.buffer = [];
-		this.state.assemblyOrder = [];
-		this.state.currentQuestion = null;
+
+		this.state.totalFragments = parts.length;
+		this.state.buffer = Array(parts.length).fill(null);
+		this.state.questionType = q.type;
+		this.state.prompt = null;
+		this.state.players.forEach((p) => (p.wantsRestart = false));
 		this.submitCooldown.clear();
 		this.distributeFragments();
 	}
 
+	// Re-run the current question from scratch (all players agreed).
+	private restartQuestion(): void {
+		if (!this.currentMessage) return;
+		if (this.roundTimer) { clearTimeout(this.roundTimer); this.roundTimer = null; }
+		if (this.redistTimer) { clearTimeout(this.redistTimer); this.redistTimer = null; }
+		// Re-roll fresh fragment ids so the new flash is a clean slate.
+		this.internalFrags = this.internalFrags.map((f) => ({ ...f, id: crypto.randomUUID() }));
+		this.state.buffer = Array(this.state.totalFragments).fill(null);
+		this.state.prompt = null;
+		this.state.players.forEach((p) => (p.wantsRestart = false));
+		this.submitCooldown.clear();
+		this.broadcastAll({ type: 'toast', text: '全員同意，重新開始本題 ↻', kind: 'info' });
+		this.distributeFragments();
+	}
+
 	private distributeFragments(): void {
-		const filledIds = new Set(this.state.buffer.map((b) => b.id));
-		if (filledIds.size >= this.state.totalFragments) {
-			this.enterAssemble();
+		const filledSlots = new Set(
+			this.state.buffer.flatMap((v, i) => (v !== null ? [i] : []))
+		);
+		if (filledSlots.size >= this.state.totalFragments) {
+			this.enterAnswer();
 			return;
 		}
 		this.state.round++;
@@ -311,7 +326,7 @@ export class Room {
 		this.clearDisarmTimers();
 		this.armTime.clear();
 
-		const unfilled = shuffle(this.internalFrags.filter((f) => !filledIds.has(f.id)));
+		const unfilled = shuffle(this.internalFrags.filter((f) => !filledSlots.has(f.slot)));
 
 		this.state.players.forEach((player, i) => {
 			const frag = unfilled[i % unfilled.length];
@@ -381,30 +396,32 @@ export class Room {
 		});
 		this.armTime.clear();
 
-		if (this.state.buffer.length >= this.state.totalFragments) {
-			this.enterAssemble();
+		if (this.filledCount() >= this.state.totalFragments) {
+			this.enterAnswer();
 		} else {
 			this.broadcastState();
-			this.redistTimer = setTimeout(() => { this.redistTimer = null; this.distributeFragments(); }, 600);
+			this.redistTimer = setTimeout(() => {
+				this.redistTimer = null;
+				this.distributeFragments();
+			}, 600);
 		}
 	}
 
-	private enterAssemble(): void {
+	private enterAnswer(): void {
 		if (this.afkTimer) {
 			clearTimeout(this.afkTimer);
 			this.afkTimer = null;
 		}
-		this.state.phase = 'assemble';
-		this.state.assemblyOrder = shuffle(this.state.buffer.map((b) => b.id));
+		this.state.phase = 'answer';
+		this.state.prompt = this.currentMessage?.prompt ?? null;
+		this.state.players.forEach((p) => (p.wantsRestart = false));
+		this.submitCooldown.clear();
+		this.broadcastAll({ type: 'toast', text: '筆記收集完成，開始作答', kind: 'success' });
 		this.broadcastState();
 	}
 
-	private enterAnswer(): void {
-		this.state.phase = 'answer';
-		this.state.currentQuestion = this.currentMessage.text;
-		this.submitCooldown.clear();
-		this.broadcastAll({ type: 'toast', text: '排列正確！回答問題', kind: 'success' });
-		this.broadcastState();
+	private filledCount(): number {
+		return this.state.buffer.reduce((acc, v) => acc + (v !== null ? 1 : 0), 0);
 	}
 
 	private clearDisarmTimers(): void {

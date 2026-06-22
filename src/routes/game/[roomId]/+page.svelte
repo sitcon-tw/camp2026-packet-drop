@@ -12,10 +12,12 @@
 	let submitCooldownUntil = $state(0);
 	let wsReady = $state(false);
 	let answerInput = $state('');
+	let noteInput = $state('');
 
-	// Drag state
-	let localOrder = $state<string[]>([]);
-	let dragFrom = $state<number | null>(null);
+	// Flash / reveal countdown
+	let revealLeft = $state(0);
+	let fragmentHidden = $state(false);
+	let revealTimer: ReturnType<typeof setInterval> | null = null;
 
 	let wsRef: WebSocket | null = null;
 
@@ -23,10 +25,11 @@
 	const me = $derived(room?.players.find((p) => p.id === playerId));
 	const cooldownActive = $derived(submitCooldownUntil > Date.now());
 	const armedCount = $derived(room?.players.filter((p) => p.isArmed).length ?? 0);
-	// Always use server order (authoritative); localOrder is just used for optimistic rendering
-	const displayOrder = $derived(localOrder.length > 0 ? localOrder : (room?.assemblyOrder ?? []));
-	const assembled = $derived(
-		displayOrder.map((id) => room?.buffer.find((b) => b.id === id)?.content ?? '?').join('')
+	const filledCount = $derived(room?.buffer.filter((b) => b !== null).length ?? 0);
+	const restartCount = $derived(room?.players.filter((p) => p.wantsRestart).length ?? 0);
+	// For sentence questions the notes joined back reconstruct the hidden question.
+	const joinedNotes = $derived(
+		(room?.buffer ?? []).map((b) => b ?? '▢').join('')
 	);
 
 	// ── WS lifecycle ─────────────────────────────────────────────
@@ -49,25 +52,19 @@
 					sessionStorage.setItem(`pid:${roomId}`, playerId);
 					socket.send(JSON.stringify({ type: 'join' }));
 					break;
-				case 'state': {
-					const r = msg.room as RoomState;
-					room = r;
-					// Always sync localOrder from server so all players see the same order
-					if (r.phase === 'assemble') {
-						localOrder = [...r.assemblyOrder];
-					} else {
-						localOrder = [];
-					}
+				case 'state':
+					room = msg.room as RoomState;
 					break;
-				}
 				case 'inbox':
 					inbox = msg.fragment as Fragment;
+					noteInput = '';
+					startReveal();
 					break;
 				case 'log_ok':
-					addToast('封包已記錄 ✓', 'success');
+					addToast('已記錄到共享筆記 ✓', 'success');
 					break;
 				case 'log_reject':
-					addToast('封包損毀，已拒絕', 'error');
+					addToast('封包損毀，無法記錄', 'error');
 					break;
 				case 'toast':
 					addToast(msg.text as string, msg.kind as string);
@@ -89,15 +86,19 @@
 			wsRef = null;
 		};
 
-		return () => socket.close();
+		return () => {
+			if (revealTimer) clearInterval(revealTimer);
+			socket.close();
+		};
 	});
 
-	// Reset inbox when entering a new inspect phase
+	// Reset inbox/note when entering a new inspect round
 	let knownRound = $state(0);
 	$effect(() => {
 		if (room && room.phase === 'inspect' && room.round !== knownRound) {
 			knownRound = room.round;
 			inbox = null;
+			noteInput = '';
 		}
 	});
 
@@ -113,6 +114,21 @@
 		wsRef?.send(JSON.stringify(msg));
 	}
 
+	function startReveal() {
+		const secs = Math.ceil((room?.revealMs ?? 15000) / 1000);
+		revealLeft = secs;
+		fragmentHidden = false;
+		if (revealTimer) clearInterval(revealTimer);
+		revealTimer = setInterval(() => {
+			revealLeft -= 1;
+			if (revealLeft <= 0) {
+				fragmentHidden = true;
+				if (revealTimer) clearInterval(revealTimer);
+				revealTimer = null;
+			}
+		}, 1000);
+	}
+
 	function addToast(text: string, kind: string) {
 		const id = Date.now() + Math.random();
 		toasts = [...toasts, { id, text, kind }];
@@ -126,69 +142,26 @@
 		send({ type: 'ready' });
 	}
 	function logFragment() {
-		if (!inbox || me?.hasLogged) return;
-		send({ type: 'log_fragment' });
+		if (!noteInput.trim()) return;
+		send({ type: 'log_fragment', text: noteInput.trim() });
 	}
 	function armAck() {
 		if (me?.isArmed) return;
 		send({ type: 'arm_ack' });
 	}
-	function submitOrder() {
-		if (cooldownActive) return;
-		send({ type: 'submit' });
-	}
 	function submitAnswer() {
 		if (cooldownActive || !answerInput.trim()) return;
 		send({ type: 'submit_answer', text: answerInput.trim() });
 	}
+	function voteRestart() {
+		if (me?.wantsRestart) return;
+		send({ type: 'vote_restart' });
+	}
 	function onAnswerKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') submitAnswer();
 	}
-
-	// ── desktop drag & drop ──────────────────────────────────────
-	function ondragstart(e: DragEvent, index: number) {
-		dragFrom = index;
-		e.dataTransfer!.effectAllowed = 'move';
-	}
-	function ondragover(e: DragEvent) {
-		e.preventDefault();
-		e.dataTransfer!.dropEffect = 'move';
-	}
-	function ondrop(e: DragEvent, index: number) {
-		e.preventDefault();
-		if (dragFrom === null || dragFrom === index) return;
-		const next = [...displayOrder];
-		[next[dragFrom], next[index]] = [next[index], next[dragFrom]];
-		dragFrom = null;
-		localOrder = next;
-		send({ type: 'set_order', order: next });
-	}
-	function ondragend() {
-		dragFrom = null;
-	}
-
-	// ── mobile touch drag ────────────────────────────────────────
-	function ontouchstart(e: TouchEvent, index: number) {
-		dragFrom = index;
-	}
-	function ontouchmove(e: TouchEvent) {
-		e.preventDefault(); // block scroll while dragging
-	}
-	function ontouchend(e: TouchEvent) {
-		if (dragFrom === null) return;
-		const touch = e.changedTouches[0];
-		const el = document.elementFromPoint(touch.clientX, touch.clientY);
-		const chip = el?.closest('[data-drag-index]') as HTMLElement | null;
-		if (chip) {
-			const targetIndex = parseInt(chip.dataset.dragIndex ?? '-1');
-			if (targetIndex >= 0 && targetIndex !== dragFrom) {
-				const next = [...displayOrder];
-				[next[dragFrom], next[targetIndex]] = [next[targetIndex], next[dragFrom]];
-				localOrder = next;
-				send({ type: 'set_order', order: next });
-			}
-		}
-		dragFrom = null;
+	function onNoteKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') logFragment();
 	}
 </script>
 
@@ -219,47 +192,66 @@
 		{:else}
 			<p class="muted center">等待其他玩家就緒…</p>
 		{/if}
-		<p class="hint">需要 ≥{room.minPlayers} 位玩家，共 {room.maxRounds} 輪</p>
+		<p class="hint">需要 ≥{room.minPlayers} 位玩家，共 {room.maxRounds} 題</p>
 	</div>
 
 {:else if room.phase === 'inspect'}
 	<!-- ── INSPECT ── -->
 	<div class="panel">
-		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · INSPECT</div>
-		<h2>Inspect Inbox</h2>
+		<div class="room-badge">
+			題目 {room.gameRound}/{room.maxRounds} · {room.questionType === 'clues' ? '線索' : '句子'} · INSPECT
+		</div>
+		<h2>接收封包（限時記憶）</h2>
+		<p class="sub">封包只顯示 {Math.ceil((room.revealMs ?? 15000) / 1000)} 秒，記下後用 input 輸入</p>
 
-		<div class="inbox-box" class:corrupt={inbox?.isCorrupt}>
+		<div class="inbox-box" class:corrupt={inbox?.isCorrupt} class:gone={fragmentHidden}>
 			{#if inbox}
-				<span class="mono large">{inbox.content}</span>
-				{#if inbox.isCorrupt}
-					<span class="corrupt-hint">∴ CORRUPT?</span>
+				{#if fragmentHidden}
+					<span class="muted">封包已消失，請憑記憶輸入</span>
+				{:else}
+					<span class="mono large">{inbox.content}</span>
+					{#if inbox.isCorrupt}
+						<span class="corrupt-hint">∴ CORRUPT — ACK 重傳</span>
+					{:else}
+						<span class="countdown">{revealLeft}s</span>
+					{/if}
 				{/if}
 			{:else}
 				<span class="muted">接收封包中…</span>
 			{/if}
 		</div>
 
-		<div class="actions">
-			<button class="btn log" onclick={logFragment} disabled={!inbox || !!me?.hasLogged}>
-				{me?.hasLogged ? '已記錄' : 'Log Fragment'}
-			</button>
-			<button class="btn ack" onclick={armAck} disabled={!!me?.isArmed}>
-				{me?.isArmed ? 'ACK ✓' : 'ARM ACK'}
+		<div class="note-row">
+			<input
+				class="answer-input"
+				bind:value={noteInput}
+				placeholder={inbox?.isCorrupt ? '封包損毀，無法記錄' : '輸入你看到的片段…'}
+				disabled={!inbox || inbox.isCorrupt}
+				onkeydown={onNoteKeydown}
+			/>
+			<button class="btn log" onclick={logFragment} disabled={!noteInput.trim()}>
+				記錄
 			</button>
 		</div>
 
-		<div class="section-label">Buffer {room.buffer.length}/{room.totalFragments}</div>
+		<div class="actions-single">
+			<button class="btn ack" onclick={armAck} disabled={!!me?.isArmed}>
+				{me?.isArmed ? 'ACK ✓（等待全員）' : 'ARM ACK（重傳）'}
+			</button>
+		</div>
+
+		<div class="section-label">共享筆記 {filledCount}/{room.totalFragments}</div>
 		<div class="buffer-row">
 			{#each Array(room.totalFragments) as _, i (i)}
-				<div class="buf-slot" class:filled={!!room.buffer[i]}>
-					{room.buffer[i] ? '▓' : '░'}
+				<div class="buf-slot" class:filled={room.buffer[i] !== null}>
+					{room.buffer[i] !== null ? '▓' : '░'}
 				</div>
 			{/each}
 		</div>
 
 		<div class="section-label">
 			ACK {armedCount}/{room.players.length}
-			<span class="hint-inline">（3 秒 window，同時按下才觸發）</span>
+			<span class="hint-inline">（同時按下才觸發重傳）</span>
 		</div>
 		<div class="ack-track">
 			<div
@@ -280,62 +272,24 @@
 		</ul>
 	</div>
 
-{:else if room.phase === 'assemble'}
-	<!-- ── ASSEMBLE ── -->
-	<div class="panel">
-		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · ASSEMBLE</div>
-		<h2>Assemble</h2>
-		<p class="sub">拖曳排列封包 → 重組問題</p>
-
-		<div class="frag-list">
-			{#each displayOrder as id, i (id)}
-				{@const b = room.buffer.find((buf) => buf.id === id)}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="frag-chip"
-					class:dragging={dragFrom === i}
-					draggable="true"
-					data-drag-index={i}
-					ondragstart={(e) => ondragstart(e, i)}
-					ondragover={ondragover}
-					ondrop={(e) => ondrop(e, i)}
-					ondragend={ondragend}
-					ontouchstart={(e) => ontouchstart(e, i)}
-					ontouchmove={ontouchmove}
-					ontouchend={ontouchend}
-				>
-					<span class="chip-n">{i + 1}</span>
-					<span class="chip-content mono">{b?.content ?? '?'}</span>
-					<span class="drag-handle">⠿</span>
-				</div>
-			{/each}
-		</div>
-
-		<div class="preview-box">
-			<span class="muted-sm">預覽：</span>
-			<span class="mono preview-text">{assembled}</span>
-		</div>
-
-		<button class="btn primary wide" onclick={submitOrder} disabled={cooldownActive}>
-			{cooldownActive ? '冷卻中…' : '確認排列'}
-		</button>
-
-		<ul class="player-mini" style="margin-top:1rem">
-			{#each room.players as p (p.id)}
-				<li class:me={p.id === playerId}>{p.name}</li>
-			{/each}
-		</ul>
-	</div>
-
 {:else if room.phase === 'answer'}
 	<!-- ── ANSWER ── -->
 	<div class="panel">
-		<div class="room-badge">ROUND {room.gameRound}/{room.maxRounds} · ANSWER</div>
+		<div class="room-badge">題目 {room.gameRound}/{room.maxRounds} · ANSWER</div>
 		<h2>回答問題</h2>
 
-		<div class="question-box">
-			<span class="mono large">{room.currentQuestion}</span>
-		</div>
+		<div class="prompt-box">{room.prompt}</div>
+
+		<div class="section-label">共享筆記（隊伍記錄，未必正確）</div>
+		{#if room.questionType === 'sentence'}
+			<div class="notes-joined mono">{joinedNotes}</div>
+		{:else}
+			<ul class="notes-list">
+				{#each room.buffer as note, i (i)}
+					<li class="mono">{note ?? '▢ （缺）'}</li>
+				{/each}
+			</ul>
+		{/if}
 
 		<div class="answer-row">
 			<input
@@ -349,9 +303,16 @@
 			</button>
 		</div>
 
-		<ul class="player-mini" style="margin-top:1.5rem">
+		<button class="btn restart wide" onclick={voteRestart} disabled={!!me?.wantsRestart}>
+			{me?.wantsRestart ? `等待全員同意 ${restartCount}/${room.players.length}` : `重新開始本題（${restartCount}/${room.players.length}）`}
+		</button>
+
+		<ul class="player-mini" style="margin-top:1.25rem">
 			{#each room.players as p (p.id)}
-				<li class:me={p.id === playerId}>{p.name}</li>
+				<li class:me={p.id === playerId}>
+					{p.name}
+					{#if p.wantsRestart}<span class="tag-afk">↻</span>{/if}
+				</li>
 			{/each}
 		</ul>
 	</div>
@@ -361,7 +322,7 @@
 	<div class="panel complete">
 		<div class="complete-icon">✓</div>
 		<h2>任務完成！</h2>
-		<p class="complete-sub">隊伍成功完成 {room.maxRounds} 輪協議重建</p>
+		<p class="complete-sub">隊伍完成 {room.maxRounds} 題協議重建</p>
 		<a href="/" class="btn primary wide" style="text-align:center;text-decoration:none">
 			再玩一局
 		</a>
@@ -464,16 +425,25 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		margin-bottom: 1rem;
+		margin-bottom: 0.75rem;
 		word-break: break-all;
 	}
 	.inbox-box.corrupt {
 		border-color: #5a2020;
 		background: #0e0808;
 	}
+	.inbox-box.gone {
+		border-style: dashed;
+		border-color: #1e1e30;
+	}
 	.corrupt-hint {
 		font-size: 0.65rem;
 		color: #a44;
+		flex-shrink: 0;
+	}
+	.countdown {
+		font-size: 0.9rem;
+		color: #fb9;
 		flex-shrink: 0;
 	}
 	.large {
@@ -481,15 +451,51 @@
 		line-height: 1.4;
 	}
 
-	/* Question box */
-	.question-box {
+	/* Prompt box */
+	.prompt-box {
 		background: #0c1020;
 		border: 1px solid #2a3a6a;
 		border-radius: 8px;
-		padding: 1.5rem 1.25rem;
+		padding: 1.25rem;
 		margin-bottom: 1.25rem;
 		text-align: center;
+		color: #ccf;
 		word-break: break-all;
+	}
+
+	/* Notes */
+	.notes-joined {
+		background: #060610;
+		border: 1px dashed #1e1e30;
+		border-radius: 6px;
+		padding: 0.85rem;
+		margin-bottom: 1.25rem;
+		color: #7af;
+		word-break: break-all;
+		letter-spacing: 0.04em;
+	}
+	.notes-list {
+		list-style: none;
+		margin: 0 0 1.25rem;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+	.notes-list li {
+		background: #0c0c16;
+		border: 1px solid #1e1e30;
+		border-radius: 6px;
+		padding: 0.5rem 0.7rem;
+		font-size: 0.9rem;
+		word-break: break-all;
+	}
+
+	/* Note input row */
+	.note-row {
+		display: flex;
+		gap: 0.6rem;
+		margin-bottom: 0.75rem;
 	}
 
 	/* Answer input */
@@ -513,12 +519,12 @@
 	.answer-input:focus {
 		border-color: #7af;
 	}
+	.answer-input:disabled {
+		opacity: 0.4;
+	}
 
 	/* Actions */
-	.actions {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.75rem;
+	.actions-single {
 		margin-bottom: 1.25rem;
 	}
 
@@ -545,10 +551,16 @@
 	}
 	.btn.log {
 		border-color: #335;
+		flex-shrink: 0;
 	}
 	.btn.ack {
 		border-color: #743;
 		color: #fb9;
+		width: 100%;
+	}
+	.btn.restart {
+		border-color: #543;
+		color: #db9;
 	}
 	.btn.primary {
 		background: #6af;
@@ -630,62 +642,6 @@
 		font-size: 0.6rem;
 	}
 
-	/* Assemble */
-	.frag-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.45rem;
-		margin-bottom: 0.75rem;
-	}
-	.frag-chip {
-		background: #10101a;
-		border: 1px solid #222232;
-		border-radius: 6px;
-		padding: 0.55rem 0.8rem;
-		cursor: grab;
-		display: flex;
-		align-items: center;
-		gap: 0.7rem;
-		user-select: none;
-		touch-action: none;
-		transition: background 0.1s, border-color 0.1s;
-	}
-	.frag-chip:hover {
-		background: #181828;
-		border-color: #3a3a6a;
-	}
-	.frag-chip.dragging {
-		opacity: 0.38;
-	}
-	.chip-n {
-		font-size: 0.65rem;
-		color: #445;
-		width: 18px;
-		flex-shrink: 0;
-		text-align: right;
-	}
-	.chip-content {
-		flex: 1;
-		word-break: break-all;
-		font-size: 0.95rem;
-	}
-	.drag-handle {
-		color: #334;
-		font-size: 0.8rem;
-		flex-shrink: 0;
-	}
-	.preview-box {
-		background: #060610;
-		border: 1px dashed #1e1e30;
-		border-radius: 6px;
-		padding: 0.75rem;
-		margin-bottom: 0.75rem;
-		word-break: break-all;
-	}
-	.preview-text {
-		color: #7af;
-	}
-
 	/* Complete */
 	.complete-icon {
 		font-size: 4rem;
@@ -732,10 +688,6 @@
 		font-family: 'Courier New', monospace;
 	}
 	.muted {
-		color: #445;
-	}
-	.muted-sm {
-		font-size: 0.72rem;
 		color: #445;
 	}
 	.center {

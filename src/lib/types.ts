@@ -1,4 +1,6 @@
-export type Phase = 'lobby' | 'inspect' | 'assemble' | 'answer' | 'complete';
+export type Phase = 'lobby' | 'inspect' | 'answer' | 'complete';
+
+export type QuestionType = 'sentence' | 'clues';
 
 // Client-visible fragment: NO slot field (slot = the ordering puzzle)
 export interface Fragment {
@@ -14,35 +16,32 @@ export interface Player {
 	hasLogged: boolean;
 	isArmed: boolean;
 	isAfk: boolean;
-}
-
-// Buffer item also hides slot number
-export interface BufferItem {
-	id: string;
-	content: string;
+	wantsRestart: boolean;
 }
 
 export interface RoomState {
 	roomId: string;
 	phase: Phase;
-	round: number;
-	gameRound: number;
-	maxRounds: number;
+	round: number; // retransmit round within current question
+	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
+	maxRounds: number; // always 2
 	minPlayers: number;
 	players: Player[];
-	buffer: BufferItem[];
+	// Shared notes by slot. null = slot not yet transcribed. Free text — never validated.
+	buffer: (string | null)[];
 	totalFragments: number;
-	assemblyOrder: string[];
-	currentQuestion: string | null;
+	revealMs: number; // how long a fragment stays visible before it vanishes
+	questionType: QuestionType | null;
+	prompt: string | null; // answer-phase question text
 }
 
 export type ClientMsg =
 	| { type: 'join'; playerName: string }
 	| { type: 'ready' }
-	| { type: 'log_fragment' }
+	| { type: 'log_fragment'; text: string }
 	| { type: 'arm_ack' }
-	| { type: 'set_order'; order: string[] }
 	| { type: 'submit_answer'; text: string }
+	| { type: 'vote_restart' }
 	| { type: 'resync' };
 
 export type ServerMsg =

@@ -2,311 +2,255 @@
 
 # ACK! — A Co-op Packet Reassembly Game
 
-> A real-time cooperative game for **N players** (default **N = 6**). The system splits one message into N fragments, ships them over a _lossy channel_, and the players must collectively retransmit and reassemble the original message.
+> A real-time cooperative game for **N players**. The system ships fragments of a question over a _lossy channel_; each fragment **flashes briefly then vanishes**, so the team must transcribe what they saw from memory, retransmit anything that arrived as garbage, and collectively answer.
 >
-> Under the hood this is a hands-on simulation of **segmentation, bit-errors, ARQ retransmission, out-of-order delivery, and reassembly buffers**.
+> Under the hood this is a hands-on simulation of **segmentation, bit-errors, ARQ retransmission, out-of-order delivery, and reassembly buffers** — with a human memory buffer standing in for the receive buffer.
 
 ---
 
 ## 1. TL;DR
 
-1. A hidden message `M` (a sentence) is split into `N` fragments.
-2. Each round, the fragments are **shuffled** and delivered one-per-player. Some arrive as **garbage** (`"12ejlk2;jas"`) because the channel is noisy.
-3. Each player reads their fragment. If it is clean, they **log it** into the shared buffer.
-4. As long as the buffer is **missing any fragment**, all `N` players must press **ACK at the same time** to trigger a **retransmit** (reshuffle + re-roll corruption).
-5. Once the buffer holds all `N` clean fragments, the team **orders them** and **submits**. Correct order ⇒ **WIN**.
+The game has **exactly two questions**:
 
-The fun lives in two places: the **synchronized ACK** (everyone must press together) and the **final ordering puzzle**.
+1. **Q1 — Sentence (memory):** a question sentence is split into `N` fragments, one per player. Each fragment is shown for **15 s** (`.env` configurable) and then disappears. Players type what they saw into a shared **notes** buffer.
+2. **Q2 — Logic clues:** a different pool. Each player receives one **clue** of a logic puzzle, flashed the same way. Players transcribe the clues into shared notes.
+
+For both questions the loop is identical:
+
+1. A fragment **flashes** for `REVEAL_MS` then vanishes.
+2. If it arrived as **garbage** (`"▓░█▒"`) you can't read it → all `N` players press **ACK together** to trigger a **retransmit** (reshuffle + re-roll corruption).
+3. Clean fragment → you **type it into the shared notes** (`input`). Notes are a free-text scratchpad — the server **never validates their content**.
+4. Once every slot has a note, the team moves to **answer**: read the collected notes, type the final answer, submit.
+5. If the notes are too gappy, **everyone votes "重新開始"** to re-flash the current question.
+
+The fun lives in three places: the **15 s memory pressure**, the **synchronized ACK** (everyone presses together to resend a corrupt fragment), and the **collective transcription** under a lossy channel.
 
 ---
 
 ## 2. The metaphor
 
-This is the part worth keeping in mind while balancing the game — every mechanic maps to a real networking concept.
+Every mechanic maps to a real networking concept.
 
 | Game element                                | Real networking concept                          |
 | ------------------------------------------- | ------------------------------------------------ |
-| The message `M` (a sentence)                | Application-layer payload                        |
-| Splitting `M` into `N` fragments            | Segmentation / IP fragmentation                  |
+| The question (sentence / clue set)          | Application-layer payload                         |
+| Splitting it into `N` fragments             | Segmentation / IP fragmentation                  |
 | Each player = one receiver slot             | A per-flow receive buffer slot                   |
-| Garbage fragment `"12ejlk2;jas"`            | Bit errors / failed checksum (CRC mismatch)      |
+| Fragment **flashes then vanishes** (15 s)   | A packet you must process before the buffer ages out |
+| Garbage fragment `"▓░█▒"`                    | Bit errors / failed checksum (CRC mismatch)      |
 | Pressing **ACK** to force a resend          | Retransmission request (ARQ)                     |
 | All `N` must ACK **together**               | Synchronized / barrier-style retransmit          |
 | Reshuffled delivery each round              | Out-of-order delivery                            |
-| Shared buffer that collects clean fragments | Reassembly buffer                                |
-| Ordering fragments correctly                | Reordering by sequence number                    |
-| Submitting the assembled message            | Delivering the reassembled payload up to the app |
+| Shared **notes** that collect transcriptions| Reassembly buffer (human-side)                   |
+| Typing the final answer                     | Delivering the reassembled payload up to the app |
 
-> **Protocol-accuracy note (optional rename):** In real ARQ, an `ACK` _confirms correct receipt_ ("stop sending"), and it's a missing-ACK or a `NAK` that triggers a resend. In this game the button players press to _request a resend_ is functionally a **collective NAK / RESEND**. Keep the label `ACK` if you like the word; if you want it protocol-accurate, label it `NAK` or `RESEND`.
+> **Protocol-accuracy note:** the button players press to _request a resend_ is functionally a **collective NAK / RESEND**. The label `ACK` is kept for flavour; rename to `NAK`/`RESEND` if you want it protocol-accurate.
 
 ---
 
 ## 3. Players, channel, and shared space
 
-- **Players** — `N` symmetric receivers. No special roles in the core mode.
-- **Channel / Server** — authoritative. Owns `M`, fragmentation, the corruption RNG, the ACK barrier, and verification. Players only send _inputs_; the server owns _truth_.
-- **Shared space** — synced live to everyone, with three zones:
-  1. **Inbox** — the single fragment _you_ received this round (clean text or garbage).
-  2. **Buffer** — the shared collection of clean fragments gathered so far (`x / N` slots filled). Persists across rounds.
-  3. **Assembly** — once the buffer is full, an ordered arrangement of the `N` fragments that the team edits together.
+- **Players** — `N` symmetric receivers. No special roles. `N ≥ MIN_PLAYERS` (default 5).
+- **Channel / Server** — authoritative. Owns the question, fragmentation, the corruption RNG, the ACK barrier, and answer verification. Players only send _intents_; the server owns _truth_.
+- **Shared space** — synced live to everyone:
+  1. **Inbox** — the single fragment _you_ received this round. **Visible for `REVEAL_MS` only**, then it vanishes.
+  2. **Notes (buffer)** — the shared collection of transcribed fragments (`x / N` slots filled). Free text, never validated, persists across retransmits.
 
 ---
 
 ## 4. Core game loop
 
 ```
-LOBBY ─► pick M ─► split into F1..FN
+LOBBY ─► all ready ─► QUESTION 1 (sentence) ─► … ─► QUESTION 2 (clues) ─► COMPLETE
+
+per QUESTION:
+   pick payload ─► split into F1..FN
    │
    ▼
 ROUND ─► shuffle fragments ─► roll corruption per fragment ─► deliver 1 per player
    │
    ▼
-INSPECT ─► each player reads their fragment ─► if clean, log it to the buffer
+FLASH ─► each fragment visible REVEAL_MS, then vanishes
    │
-   ├─ buffer incomplete ─► ACK BARRIER (all N arm together) ─► RETRANSMIT ─┐
-   │                                                                       │
-   └─ buffer complete ─► ASSEMBLE (order the N fragments) ─► SUBMIT        │
-                                                                           │
-   ◄───────────────────────────────────────────────────────────────────  ┘
-SUBMIT ─► reconstructed == M ? ─► WIN : back to ASSEMBLE
+   ├─ clean ─► player TYPES it into shared notes (input) ─┐
+   │                                                       │
+   └─ garbage ─► can't read ─► ACK BARRIER (all N arm) ─► RETRANSMIT ─► ROUND
+                                                           │
+   ◄───────────────────────────────────────────────────  ┘
+   all N notes filled ─► ANSWER ─► type answer ─► submit
+                              │
+                              ├─ correct ─► next question / COMPLETE
+                              ├─ wrong ─► cooldown, stay in ANSWER
+                              └─ all vote 重新開始 ─► reset this question ─► ROUND
 ```
 
 ---
 
 ## 5. Mechanics in detail
 
-### 5.1 Message & fragmentation
+### 5.1 The two question pools
 
-- `M` is drawn from a message pool (a sentence; can be a quote, a song line, a fact, etc.).
-- `M` is split **evenly by character count** into `N` contiguous fragments `F1..FN`. Whitespace is part of the chunks, so **concatenating the fragments in the right order reproduces `M` exactly** (join = `""`).
-- Aim `len(M)` at roughly `N * 4` to `N * 8` characters so each chunk is a meaningful-but-not-trivial slice.
-- Fragments carry a hidden `seq` index `1..N`. **Players never see `seq`** — recovering the order _is_ the puzzle.
+- **Q1 (`Q1_POOL`, `type: "sentence"`):** a sentence is split **evenly by character count** into `N` contiguous fragments. The reassembled sentence _is_ the question (e.g. `WHAT CONFIRMS DATA WAS RECEIVED`); the player then answers it (`ACKNOWLEDGEMENT`).
+- **Q2 (`Q2_POOL`, `type: "clues"`):** a logic puzzle. Each **clue string is one fragment** (e.g. `AO 在最左邊`, `AKA 緊鄰在 AO 右邊`). The answer is the deduced ordering (e.g. `AO AKA MIDORI KI SHIRO`). The number of clues need not equal `N` — extra clues are delivered across retransmit rounds; fewer clues just means some players share one.
 
-### 5.2 Corruption model
+### 5.2 The flash (ephemeral delivery)
 
-- Each round, **every** fragment is delivered (one per player), but each independently has probability `p` of arriving **corrupted** — replaced by random garbage of similar length.
-- A corrupted fragment is obviously non-linguistic (`"12ejlk2;jas"`), so players can recognize it on sight.
-- Suggested `p = 0.30 – 0.40`. With `p = 0.35`, `N = 6`: ~92% chance at least one fragment is corrupted in round 1, and a typical game converges in ~4–5 rounds.
-- Optional flag `guarantee_first_corrupt = true` forces ≥1 corruption in round 1 so the ACK mechanic always gets used.
+- When a fragment is delivered it is shown with a **countdown for `REVEAL_MS`** (default **15 000 ms**, env-controlled).
+- After the window the fragment text is **masked** (`封包已消失，請憑記憶輸入`). The transcription `input` stays open.
+- The flash is purely client-side timing; the server delivers the fragment once and the client runs the countdown.
 
-### 5.3 The shared buffer (reassembly buffer)
+### 5.3 Corruption model
 
-- Has `N` slots, one per `seq`. Persists across rounds.
-- A player logs their _current_ fragment via a **"Log my fragment"** action.
-  - **Clean** ⇒ server accepts it and fills the matching `seq` slot (dedup: re-logging an already-held fragment is a no-op).
-  - **Garbage** ⇒ server **rejects** the log (toast: _"looks corrupted"_). The buffer can never be polluted, because the server is authoritative and knows the real fragments.
-- Net effect: across enough retransmits, every fragment eventually arrives clean to _someone_ and gets banked. The buffer fills monotonically — just like real reassembly under a lossy link.
+- Each round every fragment is delivered (one per player), each independently corrupted with probability `CORRUPTION_CHANCE` (default `0.4`) — replaced by obvious garbage (`"▓░█▒■□"`).
+- A corrupt fragment **cannot be transcribed** (the input is disabled); the only path forward is to **ACK for a retransmit**.
+- `GUARANTEE_CORRUPT=true` forces ≥1 corruption in round 1 so the ACK mechanic always gets exercised.
 
-### 5.4 The ACK barrier (simultaneous press)
+### 5.4 The shared notes (reassembly buffer)
 
-This is the cooperative heartbeat. To trigger a retransmit, **all `N` players must be "armed" at the same instant.**
+- `N` slots, one per fragment `slot`. Persists across retransmits and fills monotonically.
+- A player transcribes their _current_ fragment via the **記錄** action (`input` → `log_fragment`).
+  - **Clean** ⇒ server stores the **typed text** into the matching slot. **Content is never checked against the truth** — it's a collaborative note (`充當 note`).
+  - **Garbage** ⇒ server rejects (`封包損毀，無法記錄`). The buffer can never be filled from an unreadable fragment.
+- Across enough retransmits every slot eventually arrives clean to _someone_ and gets transcribed. When all `N` slots hold a note ⇒ **answer phase**.
 
-- Pressing **ACK** _arms_ you for a short window `T_ack` (suggested **3s**), then auto-disarms.
-- If, at any instant, **all `N` players are armed simultaneously**, the barrier **fires** ⇒ retransmit.
-- If anyone's window expires before the group lines up, they disarm and must press again.
-- Consequence: one AFK / uncooperative player stalls the whole team. (See edge cases for AFK handling.)
+### 5.5 The ACK barrier (simultaneous press)
 
-### 5.5 Retransmission & reshuffle
+To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
-When the barrier fires:
+- Pressing **ACK** _arms_ you for `T_ack`, then auto-disarms.
+- If at any instant **all `N` are armed simultaneously**, the barrier **fires** ⇒ retransmit (reshuffle unfilled slots + re-roll corruption).
+- AFK handling: idle players are **auto-armed** after `T_afk` (default `2 × T_ack`) so one AFK player can't stall the team forever.
 
-1. The full message is re-fragmented (same `F1..FN`).
-2. Fragments are **randomly permuted** across the `N` player slots (out-of-order delivery).
-3. Each delivered fragment **independently re-rolls** corruption with probability `p`.
-4. A new INSPECT round begins.
+### 5.6 Answer & restart
 
-Already-banked fragments **stay** in the buffer — you only keep retransmitting to fill the _remaining_ empty slots.
-
-### 5.6 Assembly & submission
-
-- Unlocks when the buffer is full (`N / N`).
-- The team drags the `N` fragment chips into an order in the shared **Assembly** zone (anyone can rearrange; changes sync live).
-- **Submit** ⇒ server checks `join(orderedFragments, "") === M`.
-  - Match ⇒ **WIN**.
-  - No match ⇒ back to Assembly. (Optionally a small time penalty per wrong submit.)
-- Because success is judged on the **reconstructed string**, interchangeable/duplicate fragments that still rebuild `M` are accepted.
+- **Answer phase** shows the question `prompt` and the collected notes (joined for sentence, listed for clues). The true payload is **not** re-shown — you answer from your notes.
+- **Submit** ⇒ server compares `normalize(answer)` (trim, collapse whitespace, uppercase).
+  - Correct ⇒ advance to the next question, or **COMPLETE** after Q2.
+  - Wrong ⇒ short cooldown (`WRONG_PENALTY`), stay in answer.
+- **重新開始 (restart):** any player can vote; when **all `N` players have voted**, the **current question** resets — notes cleared, fresh fragments re-flashed. Use it when the notes are too incomplete to answer.
 
 ---
 
-## 6. Win / lose & scoring
+## 6. Win / lose
 
-- **Win condition:** reconstructed string equals `M`.
-- **No hard lose** in the core mode — it's co-op and the buffer only fills, so the team always converges. Difficulty comes from coordination + the ordering puzzle.
-- **Optional scoring** (lower = better, rewards an efficient channel):
-
-| Metric             | Definition                                           |
-| ------------------ | ---------------------------------------------------- |
-| Retransmits        | Number of times the ACK barrier fired                |
-| Channel efficiency | `N / (N + corrupted_deliveries)` over the whole game |
-| Time-to-solve      | Lobby-start → correct submit                         |
-| Wrong submits      | Incorrect assembly attempts                          |
+- **Win:** answer both questions correctly.
+- **No hard lose** — co-op; the notes only fill and the team can always retransmit or restart. Difficulty comes from the 15 s memory pressure, coordination on the ACK barrier, and the Q2 deduction.
 
 ---
 
-## 7. Tunable parameters
+## 7. Tunable parameters (`.env`)
 
-| Param                     | Meaning                             | Suggested     |
-| ------------------------- | ----------------------------------- | ------------- |
-| `N`                       | Players & fragments                 | `6`           |
-| `p`                       | Per-fragment corruption probability | `0.30 – 0.40` |
-| `T_ack`                   | ACK arm window (seconds)            | `3`           |
-| `guarantee_first_corrupt` | Force ≥1 corruption in round 1      | `true`        |
-| `reshuffle`               | Permute fragment→player each round  | `true`        |
-| `min_len / max_len`       | Message length bounds (chars)       | `N*4 … N*8`   |
-| `wrong_submit_penalty`    | Optional cooldown on bad submit     | `0–5s`        |
+| Env var             | Meaning                                          | Default  |
+| ------------------- | ------------------------------------------------ | -------- |
+| `WS_PORT`           | Bun WebSocket port                               | `8080`   |
+| `MIN_PLAYERS`       | Minimum players to start                         | `5`      |
+| `REVEAL_MS`         | How long a fragment stays visible (flash window) | `15000`  |
+| `T_ACK`             | ms a player stays armed (all must overlap)       | `3000`   |
+| `T_AFK`             | ms before an idle player is auto-armed           | `2×T_ACK`|
+| `CORRUPTION_CHANCE` | Per-fragment corruption probability `0.0–1.0`    | `0.4`    |
+| `GUARANTEE_CORRUPT` | Force ≥1 corruption in round 1                    | `true`   |
+| `WRONG_PENALTY`     | ms cooldown after a wrong answer                 | `3000`   |
+
+> Questions per game is fixed at **2** (`MAX_ROUNDS` in `src/lib/config.ts`).
 
 ---
 
 ## 8. Edge cases & rulings
 
-| Situation                                        | Ruling                                                                                                                |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| A player is AFK ⇒ barrier can never fire         | Auto-arm idle players after `2 * T_ack`, **or** allow a host to replace/kick. Pick one; auto-arm is the simplest MVP. |
-| Player logs garbage                              | Server rejects; no buffer pollution, no penalty. Recognizing garbage just saves clicks.                               |
-| Duplicate fragments in `M` (e.g. repeated chunk) | Allowed — success is judged on the full reconstructed string, so interchangeable chunks pass.                         |
-| Mid-round disconnect                             | On reconnect, resync from server state (buffer + current inbox). Server is authoritative, so no state is lost.        |
-| Buffer fills mid-round before everyone logs      | Immediately unlock Assembly; remaining unlogged inboxes are irrelevant.                                               |
-| Two players drag the same chip simultaneously    | Last-write-wins on the shared assembly order (server-sequenced).                                                      |
+| Situation                                   | Ruling                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------- |
+| A player is AFK ⇒ barrier can never fire    | Idle players auto-arm after `T_afk`, so the barrier still fires.                |
+| Player's fragment is corrupt                | Transcription input disabled; they ACK for a retransmit. No buffer pollution.   |
+| Player mistypes their note                  | Allowed — notes are never validated. Verification is only the final answer.     |
+| Notes too gappy to answer                   | All players vote **重新開始** to re-flash the current question.                 |
+| Mid-round disconnect                        | On reconnect, resync from server state (notes + current inbox). No state lost.  |
+| Clue count ≠ player count (Q2)              | Extra clues spread across retransmit rounds; fewer clues → some players share.  |
 
 ---
 
-## 9. Variants / modes
+## 9. Diagrams
 
-- **Hidden Sender (asymmetric):** one player sees full `M` but can only communicate through a heavily rate-limited channel — a hidden-information co-op twist.
-- **Checksum mode (easier):** corrupted slots are flagged red instead of shown as raw garbage; removes the "is this garbage?" judgment.
-- **Strict ARQ (harder):** delivery can also _drop_ a fragment entirely (empty inbox), not just corrupt it.
-- **Campaign:** chain messages into levels; carry the channel-efficiency score across the run.
-- **Timed channel:** a per-round timer; if the team doesn't ACK in time, a forced retransmit fires anyway (jitter pressure).
-
----
-
-## 10. Diagrams
-
-### 10.1 Main game flow
+### 9.1 Main game flow
 
 ```mermaid
 flowchart TD
-    A([Lobby: N players join, N = 6]) --> B[Server selects message M]
-    B --> C[Server splits M into F1..FN]
-    C --> D[Round begins]
-    D --> E[Shuffle fragments<br/>and roll corruption per fragment]
-    E --> F[Each player receives one fragment]
-    F --> G{Is the fragment<br/>clean / readable?}
-    G -- Yes --> H[Player logs fragment<br/>to shared buffer]
-    G -- No, garbage --> I[Discard and wait for retransmit]
-    H --> J{Buffer holds all N<br/>clean fragments?}
-    I --> J
-    J -- No --> K[ACK barrier:<br/>all N players arm ACK<br/>inside the time window]
-    K --> L{All N armed<br/>at the same instant?}
-    L -- No, window expired --> K
-    L -- Yes --> M[Retransmit:<br/>reshuffle and re-roll corruption]
-    M --> D
-    J -- Yes --> N[Assembly phase:<br/>order the N fragments]
-    N --> O[Submit assembled message]
-    O --> P{Reconstructed == M?}
-    P -- No --> N
-    P -- Yes --> Q([WIN])
+    A([Lobby: N players ready]) --> B[Question k: pick payload]
+    B --> C[Split into F1..FN]
+    C --> D[Round: shuffle + roll corruption]
+    D --> E[Deliver one fragment per player]
+    E --> F[FLASH for REVEAL_MS then vanish]
+    F --> G{Clean / readable?}
+    G -- Yes --> H[Type fragment into shared notes]
+    G -- No, garbage --> I[ACK barrier: all N arm together]
+    I --> J{All N armed at once?}
+    J -- No, window expired --> I
+    J -- Yes --> K[Retransmit: reshuffle + re-roll]
+    K --> D
+    H --> L{All N notes filled?}
+    L -- No --> D
+    L -- Yes --> M[ANSWER: read notes, type answer]
+    M --> N{Correct?}
+    N -- No --> M
+    N -- All vote restart --> B
+    N -- Yes --> O{More questions?}
+    O -- Yes --> B
+    O -- No --> P([COMPLETE])
 ```
 
-### 10.2 ACK / retransmit protocol (sequence)
-
-```mermaid
-sequenceDiagram
-    participant S as Channel / Server
-    participant P1 as Player 1
-    participant Pi as Players 2..5
-    participant P6 as Player 6
-
-    S->>S: split M into F1..FN
-    loop Until buffer holds all N clean fragments
-        S->>P1: deliver fragment, maybe CORRUPTED
-        S->>Pi: deliver fragment, maybe CORRUPTED
-        S->>P6: deliver fragment, maybe CORRUPTED
-        Note over P1,P6: Players inspect.<br/>Clean fragments are logged into the shared buffer.
-        P1->>S: arm ACK
-        Pi->>S: arm ACK
-        P6->>S: arm ACK
-        alt All N armed inside the window
-            S->>S: barrier fires, retransmit<br/>reshuffle and re-roll corruption
-        else Someone's window expires
-            Note over P1,P6: Armed flags reset, players press again
-        end
-    end
-    Note over S,P6: Buffer complete
-    P1->>S: submit assembled order
-    S-->>P1: WIN if the order reconstructs M
-```
-
-### 10.3 Session state machine
+### 9.2 Session state machine
 
 ```mermaid
 stateDiagram-v2
     [*] --> Lobby
-    Lobby --> Distributing: all N players ready
-    Distributing --> Inspecting: fragments delivered
-    Inspecting --> Assembling: buffer has all N clean
-    Inspecting --> AckBarrier: still missing fragments
-    AckBarrier --> Distributing: all N armed, barrier fires
-    AckBarrier --> AckBarrier: window expired, re-arm
-    Assembling --> Verifying: submit order
-    Verifying --> Assembling: order incorrect
-    Verifying --> Win: order reconstructs M
-    Win --> [*]
+    Lobby --> Inspect: all N ready
+    Inspect --> Inspect: ACK barrier fires, retransmit
+    Inspect --> Answer: all N notes filled
+    Answer --> Answer: wrong answer (cooldown)
+    Answer --> Inspect: all vote 重新開始
+    Answer --> Inspect: correct, next question
+    Answer --> Complete: correct, last question
+    Complete --> [*]
 ```
 
 ---
 
-## 11. MVP architecture sketch (optional)
+## 10. Architecture
 
-Keep it small — server-authoritative state + a thin reactive client.
+Server-authoritative state + a thin reactive client.
 
-**Realtime / server**
+**Realtime / server** (`game/`)
 
-- `Bun.serve` with native WebSocket; one room per game (`roomId`).
-- Server holds the only source of truth: `M`, fragments, corruption RNG, ACK arm-flags, buffer, assembly order, phase.
-- Clients send _intents_ (`arm_ack`, `log_fragment`, `set_order`, `submit`); server validates and broadcasts the new room snapshot.
+- `Bun.serve` with native WebSocket; one `Room` per `roomId` (`game/server.ts`, `game/room.ts`).
+- Server holds the only source of truth: the two questions, fragments, corruption RNG, ACK arm-flags, the notes buffer, phase.
+- Clients send _intents_ (`ready`, `log_fragment`, `arm_ack`, `submit_answer`, `vote_restart`, `resync`); the server validates and broadcasts the room snapshot.
 
-**Shared state shape (TS):**
+**Shared state shape (TS)** — see `src/lib/types.ts`:
 
 ```ts
-type Phase =
-	| 'lobby'
-	| 'distributing'
-	| 'inspecting'
-	| 'ackBarrier'
-	| 'assembling'
-	| 'verifying'
-	| 'win';
-
-interface Fragment {
-	seq: number; // hidden from clients
-	text: string; // hidden from clients
-}
-
-interface PlayerView {
-	id: string;
-	inbox: string; // clean text OR garbage, for THIS player this round
-	acked: boolean; // armed flag
-}
+type Phase = 'lobby' | 'inspect' | 'answer' | 'complete';
 
 interface RoomState {
+	roomId: string;
 	phase: Phase;
-	n: number; // 6
-	round: number;
-	buffer: (string | null)[]; // length n, by seq; null = slot not yet banked
-	assembly: string[]; // current ordered guess (assembling phase)
-	players: PlayerView[];
-	// server-only fields (never serialized to clients): message, fragments, rng seed
+	round: number; // retransmit round within current question
+	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
+	maxRounds: number; // always 2
+	minPlayers: number;
+	players: Player[];
+	buffer: (string | null)[]; // shared notes by slot; null = not yet transcribed
+	totalFragments: number;
+	revealMs: number; // flash window
+	questionType: 'sentence' | 'clues' | null;
+	prompt: string | null; // answer-phase question text
 }
 ```
 
-**Client (Svelte 5)**
+**Client (Svelte 5)** — `src/routes/game/[roomId]/+page.svelte`
 
-- Hold `RoomState` in a `$state` rune; patch it from each WS broadcast.
-- `$derived` for computed UI (`collected = buffer.filter(Boolean).length`, `allArmed = players.every(p => p.acked)`).
-- `$effect` only for the WS subscription lifecycle (open/close/reconnect).
-- No client-side trust: the buffer, corruption, and verification all come from the server.
+- Holds `RoomState` in a `$state` rune; patches it from each WS broadcast.
+- Runs the `REVEAL_MS` flash countdown client-side; masks the fragment when it expires.
+- `$derived` for computed UI (`filledCount`, `armedCount`, `restartCount`, joined notes).
+- `$effect` only for the WS subscription lifecycle.
+- No client-side trust: notes storage, corruption, and answer verification all come from the server.
 
-**Config**
-
-- Message pool + tunables live in a single config file (JSON/TOML); no DB needed for the MVP. Add SQLite later only if you want leaderboards or a persistent campaign.
+**Config** — message pools + tunables live in `src/lib/config.ts` + `.env`; no DB.

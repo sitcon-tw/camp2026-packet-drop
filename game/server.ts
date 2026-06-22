@@ -58,20 +58,16 @@ const server = Bun.serve<WsData>({
 					room.setReady(playerId);
 					break;
 				case 'log_fragment':
-					room.logFragment(playerId);
+					room.logFragment(playerId, String(msg.text ?? ''));
 					break;
 				case 'arm_ack':
 					room.armAck(playerId);
 					break;
-				case 'set_order':
-					if (!Array.isArray(msg.order)) return;
-					room.setOrder(playerId, msg.order as string[]);
-					break;
-				case 'submit':
-					room.submitOrder(playerId);
-					break;
 				case 'submit_answer':
 					room.submitAnswer(playerId, String(msg.text ?? ''));
+					break;
+				case 'vote_restart':
+					room.voteRestart(playerId);
 					break;
 				case 'resync':
 					room.resync(playerId);
