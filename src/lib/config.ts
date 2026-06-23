@@ -3,7 +3,6 @@ const T_ACK_MS = parseInt(process.env["T_ACK"] ?? "3000");
 
 export const CONFIG = {
         T_ack: T_ACK_MS,
-        T_afk: parseInt(process.env["T_AFK"] ?? String(T_ACK_MS * 2)),
         wrong_submit_penalty: parseInt(process.env["WRONG_PENALTY"] ?? "3000"),
         guarantee_first_corrupt: process.env["GUARANTEE_CORRUPT"] !== "false",
         corruption_chance: parseFloat(process.env["CORRUPTION_CHANCE"] ?? "0.4"),

@@ -50,7 +50,6 @@ export class Room {
 	private submitCooldown = new Map<string, number>();
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	private afkTimer: ReturnType<typeof setTimeout> | null = null;
 	private redistTimer: ReturnType<typeof setTimeout> | null = null;
 	private roundTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -79,7 +78,6 @@ export class Room {
 			isReady: false,
 			hasLogged: false,
 			isArmed: false,
-			isAfk: false,
 			wantsRestart: false,
 		});
 		this.broadcastState();
@@ -142,17 +140,15 @@ export class Room {
 		const now = Date.now();
 		this.armTime.set(playerId, now);
 
-		if (!p.isAfk) {
-			const t = setTimeout(() => {
-				if (this.armTime.get(playerId) === now) {
-					p.isArmed = false;
-					this.armTime.delete(playerId);
-					this.disarmTimers.delete(playerId);
-					this.broadcastState();
-				}
-			}, CONFIG.T_ack);
-			this.disarmTimers.set(playerId, t);
-		}
+		const t = setTimeout(() => {
+			if (this.armTime.get(playerId) === now) {
+				p.isArmed = false;
+				this.armTime.delete(playerId);
+				this.disarmTimers.delete(playerId);
+				this.broadcastState();
+			}
+		}, CONFIG.T_ack);
+		this.disarmTimers.set(playerId, t);
 
 		if (this.checkAllOverlapping(now)) {
 			this.clearDisarmTimers();
@@ -220,7 +216,6 @@ export class Room {
 			this.submitCooldown.clear();
 			this.armTime.clear();
 			this.clearDisarmTimers();
-			if (this.afkTimer) { clearTimeout(this.afkTimer); this.afkTimer = null; }
 			if (this.redistTimer) { clearTimeout(this.redistTimer); this.redistTimer = null; }
 			if (this.roundTimer) { clearTimeout(this.roundTimer); this.roundTimer = null; }
 			return;
@@ -321,7 +316,6 @@ export class Room {
 		this.state.players.forEach((p) => {
 			p.hasLogged = false;
 			p.isArmed = false;
-			p.isAfk = false;
 		});
 		this.clearDisarmTimers();
 		this.armTime.clear();
@@ -342,26 +336,6 @@ export class Room {
 			});
 		});
 
-		if (this.afkTimer) clearTimeout(this.afkTimer);
-		this.afkTimer = setTimeout(() => {
-			const now = Date.now();
-			let changed = false;
-			this.state.players.forEach((p) => {
-				if (!p.isArmed) {
-					p.isAfk = true;
-					p.isArmed = true;
-					this.armTime.set(p.id, now);
-					changed = true;
-				}
-			});
-			if (changed && this.checkAllOverlapping(now)) {
-				this.clearDisarmTimers();
-				this.fireAckBarrier();
-			} else if (changed) {
-				this.broadcastState();
-			}
-		}, CONFIG.T_afk);
-
 		this.broadcastState();
 		this.state.players.forEach((p) => {
 			const inbox = this.playerInboxes.get(p.id)!;
@@ -379,20 +353,14 @@ export class Room {
 	private checkAllOverlapping(now: number): boolean {
 		return this.state.players.every((p) => {
 			if (!p.isArmed) return false;
-			if (p.isAfk) return true;
 			const t = this.armTime.get(p.id);
 			return t !== undefined && now - t < CONFIG.T_ack;
 		});
 	}
 
 	private fireAckBarrier(): void {
-		if (this.afkTimer) {
-			clearTimeout(this.afkTimer);
-			this.afkTimer = null;
-		}
 		this.state.players.forEach((p) => {
 			p.isArmed = false;
-			p.isAfk = false;
 		});
 		this.armTime.clear();
 
@@ -408,10 +376,6 @@ export class Room {
 	}
 
 	private enterAnswer(): void {
-		if (this.afkTimer) {
-			clearTimeout(this.afkTimer);
-			this.afkTimer = null;
-		}
 		this.state.phase = 'answer';
 		this.state.prompt = this.currentMessage?.prompt ?? null;
 		this.state.players.forEach((p) => (p.wantsRestart = false));

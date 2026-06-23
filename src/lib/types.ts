@@ -15,7 +15,6 @@ export interface Player {
 	isReady: boolean;
 	hasLogged: boolean;
 	isArmed: boolean;
-	isAfk: boolean;
 	wantsRestart: boolean;
 }
 

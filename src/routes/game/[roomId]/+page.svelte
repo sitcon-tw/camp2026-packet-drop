@@ -265,8 +265,7 @@
 				<li class:me={p.id === playerId}>
 					<span class="dot sm" class:on={p.isArmed}></span>
 					{p.name}
-					{#if p.isAfk}<span class="tag-afk">AFK</span>{/if}
-					{#if p.hasLogged}<span class="tag-logged">logged</span>{/if}
+{#if p.hasLogged}<span class="tag-logged">logged</span>{/if}
 				</li>
 			{/each}
 		</ul>
