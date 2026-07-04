@@ -1,0 +1,9 @@
+node_modules
+.git
+.svelte-kit
+.env
+build
+memory
+.claude
+.opencode
+.vscode
