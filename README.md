@@ -12,8 +12,8 @@
 
 The game has **exactly two questions**:
 
-1. **Q1 — Sentence (memory):** a question sentence is split into `N` fragments, one per player. Each fragment is shown for **15 s** (`.env` configurable) and then disappears. Players type what they saw into a shared **notes** buffer.
-2. **Q2 — Logic clues:** a different pool. Each player receives one **clue** of a logic puzzle, flashed the same way. Players transcribe the clues into shared notes.
+1. **Q1 — Sentence (memory):** `請問你參加的夏令營的主辦單位英文縮寫是什麼？` is split into `N` fragments, one per player. Each fragment is shown for **15 s** (`.env` configurable) and then disappears. Players type what they saw into a shared **notes** buffer. Answer: `SITCON`.
+2. **Q2 — Logic clues:** the round-table logic puzzle clues are flashed the same way. Players transcribe the clues into shared notes, then answer `CC 的右手邊是誰？`. Answer: `Tang`.
 
 For both questions the loop is identical:
 
@@ -31,18 +31,18 @@ The fun lives in three places: the **15 s memory pressure**, the **synchronized 
 
 Every mechanic maps to a real networking concept.
 
-| Game element                                | Real networking concept                          |
-| ------------------------------------------- | ------------------------------------------------ |
-| The question (sentence / clue set)          | Application-layer payload                         |
-| Splitting it into `N` fragments             | Segmentation / IP fragmentation                  |
-| Each player = one receiver slot             | A per-flow receive buffer slot                   |
-| Fragment **flashes then vanishes** (15 s)   | A packet you must process before the buffer ages out |
-| Garbage fragment `"▓░█▒"`                    | Bit errors / failed checksum (CRC mismatch)      |
-| Pressing **ACK** to force a resend          | Retransmission request (ARQ)                     |
-| All `N` must ACK **together**               | Synchronized / barrier-style retransmit          |
-| Reshuffled delivery each round              | Out-of-order delivery                            |
-| Shared **notes** that collect transcriptions| Reassembly buffer (human-side)                   |
-| Typing the final answer                     | Delivering the reassembled payload up to the app |
+| Game element                                 | Real networking concept                              |
+| -------------------------------------------- | ---------------------------------------------------- |
+| The question (sentence / clue set)           | Application-layer payload                            |
+| Splitting it into `N` fragments              | Segmentation / IP fragmentation                      |
+| Each player = one receiver slot              | A per-flow receive buffer slot                       |
+| Fragment **flashes then vanishes** (15 s)    | A packet you must process before the buffer ages out |
+| Garbage fragment `"▓░█▒"`                    | Bit errors / failed checksum (CRC mismatch)          |
+| Pressing **ACK** to force a resend           | Retransmission request (ARQ)                         |
+| All `N` must ACK **together**                | Synchronized / barrier-style retransmit              |
+| Reshuffled delivery each round               | Out-of-order delivery                                |
+| Shared **notes** that collect transcriptions | Reassembly buffer (human-side)                       |
+| Typing the final answer                      | Delivering the reassembled payload up to the app     |
 
 > **Protocol-accuracy note:** the button players press to _request a resend_ is functionally a **collective NAK / RESEND**. The label `ACK` is kept for flavour; rename to `NAK`/`RESEND` if you want it protocol-accurate.
 
@@ -90,8 +90,8 @@ FLASH ─► each fragment visible REVEAL_MS, then vanishes
 
 ### 5.1 The two question pools
 
-- **Q1 (`Q1_POOL`, `type: "sentence"`):** a sentence is split **evenly by character count** into `N` contiguous fragments. The reassembled sentence _is_ the question (e.g. `WHAT CONFIRMS DATA WAS RECEIVED`); the player then answers it (`ACKNOWLEDGEMENT`).
-- **Q2 (`Q2_POOL`, `type: "clues"`):** a logic puzzle. Each **clue string is one fragment** (e.g. `AO 在最左邊`, `AKA 緊鄰在 AO 右邊`). The answer is the deduced ordering (e.g. `AO AKA MIDORI KI SHIRO`). The number of clues need not equal `N` — extra clues are delivered across retransmit rounds; fewer clues just means some players share one.
+- **Q1 (`Q1_POOL`, `type: "sentence"`):** a sentence is split **evenly by character count** into `N` contiguous fragments. The reassembled sentence _is_ the question; the team answers `SITCON`.
+- **Q2 (`Q2_POOL`, `type: "clues"`):** a round-table logic puzzle. Each **clue string is one fragment**. The answer is the person immediately to CC's right, `Tang`. The number of clues need not equal `N` — extra clues are delivered across retransmit rounds; fewer clues just means some players share one.
 
 ### 5.2 The flash (ephemeral delivery)
 
@@ -119,7 +119,7 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
 - Pressing **ACK** _arms_ you for `T_ack`, then auto-disarms.
 - If at any instant **all `N` are armed simultaneously**, the barrier **fires** ⇒ retransmit (reshuffle unfilled slots + re-roll corruption).
-- AFK handling: idle players are **auto-armed** after `T_afk` (default `2 × T_ack`) so one AFK player can't stall the team forever.
+- There is no auto-arm bypass; all connected players must coordinate the ACK barrier.
 
 ### 5.6 Answer & restart
 
@@ -140,16 +140,15 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
 ## 7. Tunable parameters (`.env`)
 
-| Env var             | Meaning                                          | Default  |
-| ------------------- | ------------------------------------------------ | -------- |
-| `WS_PORT`           | Bun WebSocket port                               | `8080`   |
-| `MIN_PLAYERS`       | Minimum players to start                         | `5`      |
-| `REVEAL_MS`         | How long a fragment stays visible (flash window) | `15000`  |
-| `T_ACK`             | ms a player stays armed (all must overlap)       | `3000`   |
-| `T_AFK`             | ms before an idle player is auto-armed           | `2×T_ACK`|
-| `CORRUPTION_CHANCE` | Per-fragment corruption probability `0.0–1.0`    | `0.4`    |
-| `GUARANTEE_CORRUPT` | Force ≥1 corruption in round 1                    | `true`   |
-| `WRONG_PENALTY`     | ms cooldown after a wrong answer                 | `3000`   |
+| Env var             | Meaning                                          | Default |
+| ------------------- | ------------------------------------------------ | ------- |
+| `WS_PORT`           | Bun WebSocket port                               | `8080`  |
+| `MIN_PLAYERS`       | Minimum players to start                         | `5`     |
+| `REVEAL_MS`         | How long a fragment stays visible (flash window) | `15000` |
+| `T_ACK`             | ms a player stays armed (all must overlap)       | `3000`  |
+| `CORRUPTION_CHANCE` | Per-fragment corruption probability `0.0–1.0`    | `0.4`   |
+| `GUARANTEE_CORRUPT` | Force ≥1 corruption in round 1                   | `true`  |
+| `WRONG_PENALTY`     | ms cooldown after a wrong answer                 | `3000`  |
 
 > Questions per game is fixed at **2** (`MAX_ROUNDS` in `src/lib/config.ts`).
 
@@ -157,14 +156,14 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
 ## 8. Edge cases & rulings
 
-| Situation                                   | Ruling                                                                          |
-| ------------------------------------------- | ------------------------------------------------------------------------------- |
-| A player is AFK ⇒ barrier can never fire    | Idle players auto-arm after `T_afk`, so the barrier still fires.                |
-| Player's fragment is corrupt                | Transcription input disabled; they ACK for a retransmit. No buffer pollution.   |
-| Player mistypes their note                  | Allowed — notes are never validated. Verification is only the final answer.     |
-| Notes too gappy to answer                   | All players vote **重新開始** to re-flash the current question.                 |
-| Mid-round disconnect                        | On reconnect, resync from server state (notes + current inbox). No state lost.  |
-| Clue count ≠ player count (Q2)              | Extra clues spread across retransmit rounds; fewer clues → some players share.  |
+| Situation                                | Ruling                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------ |
+| A player is AFK ⇒ barrier can never fire | The room waits; coordinate before starting or reconnect/reset the room.        |
+| Player's fragment is corrupt             | Transcription input disabled; they ACK for a retransmit. No buffer pollution.  |
+| Player mistypes their note               | Allowed — notes are never validated. Verification is only the final answer.    |
+| Notes too gappy to answer                | All players vote **重新開始** to re-flash the current question.                |
+| Mid-round disconnect                     | On reconnect, resync from server state (notes + current inbox). No state lost. |
+| Clue count ≠ player count (Q2)           | Extra clues spread across retransmit rounds; fewer clues → some players share. |
 
 ---
 

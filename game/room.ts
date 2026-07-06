@@ -78,7 +78,7 @@ export class Room {
 			isReady: false,
 			hasLogged: false,
 			isArmed: false,
-			wantsRestart: false,
+			wantsRestart: false
 		});
 		this.broadcastState();
 	}
@@ -109,7 +109,11 @@ export class Room {
 
 		if (inbox.isCorrupt) {
 			this.send(playerId, { type: 'log_reject', reason: 'CORRUPT' });
-			this.send(playerId, { type: 'toast', text: '封包損毀，無法記錄 — 請 ACK 重傳', kind: 'error' });
+			this.send(playerId, {
+				type: 'toast',
+				text: '封包損毀，無法記錄 — 請 ACK 重傳',
+				kind: 'error'
+			});
 			return;
 		}
 
@@ -216,8 +220,14 @@ export class Room {
 			this.submitCooldown.clear();
 			this.armTime.clear();
 			this.clearDisarmTimers();
-			if (this.redistTimer) { clearTimeout(this.redistTimer); this.redistTimer = null; }
-			if (this.roundTimer) { clearTimeout(this.roundTimer); this.roundTimer = null; }
+			if (this.redistTimer) {
+				clearTimeout(this.redistTimer);
+				this.redistTimer = null;
+			}
+			if (this.roundTimer) {
+				clearTimeout(this.roundTimer);
+				this.roundTimer = null;
+			}
 			return;
 		}
 		this.broadcastState();
@@ -232,8 +242,8 @@ export class Room {
 				fragment: {
 					id: inbox.fragId,
 					content: inbox.content,
-					isCorrupt: inbox.isCorrupt,
-				} satisfies Fragment,
+					isCorrupt: inbox.isCorrupt
+				} satisfies Fragment
 			});
 		}
 	}
@@ -253,7 +263,7 @@ export class Room {
 			totalFragments: 0,
 			revealMs: CONFIG.reveal_ms,
 			questionType: null,
-			prompt: null,
+			prompt: null
 		};
 	}
 
@@ -276,13 +286,14 @@ export class Room {
 		this.internalFrags = parts.map((cleanContent, slot) => ({
 			id: crypto.randomUUID(),
 			slot,
-			cleanContent,
+			cleanContent
 		}));
 
 		this.state.totalFragments = parts.length;
 		this.state.buffer = Array(parts.length).fill(null);
 		this.state.questionType = q.type;
 		this.state.prompt = null;
+		this.state.round = 0;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
 		this.submitCooldown.clear();
 		this.distributeFragments();
@@ -291,8 +302,14 @@ export class Room {
 	// Re-run the current question from scratch (all players agreed).
 	private restartQuestion(): void {
 		if (!this.currentMessage) return;
-		if (this.roundTimer) { clearTimeout(this.roundTimer); this.roundTimer = null; }
-		if (this.redistTimer) { clearTimeout(this.redistTimer); this.redistTimer = null; }
+		if (this.roundTimer) {
+			clearTimeout(this.roundTimer);
+			this.roundTimer = null;
+		}
+		if (this.redistTimer) {
+			clearTimeout(this.redistTimer);
+			this.redistTimer = null;
+		}
 		// Re-roll fresh fragment ids so the new flash is a clean slate.
 		this.internalFrags = this.internalFrags.map((f) => ({ ...f, id: crypto.randomUUID() }));
 		this.state.buffer = Array(this.state.totalFragments).fill(null);
@@ -304,9 +321,7 @@ export class Room {
 	}
 
 	private distributeFragments(): void {
-		const filledSlots = new Set(
-			this.state.buffer.flatMap((v, i) => (v !== null ? [i] : []))
-		);
+		const filledSlots = new Set(this.state.buffer.flatMap((v, i) => (v !== null ? [i] : [])));
 		if (filledSlots.size >= this.state.totalFragments) {
 			this.enterAnswer();
 			return;
@@ -332,7 +347,7 @@ export class Room {
 				fragId: frag.id,
 				content: isCorrupt ? corrupt(frag.cleanContent) : frag.cleanContent,
 				isCorrupt,
-				slot: frag.slot,
+				slot: frag.slot
 			});
 		});
 
@@ -344,8 +359,8 @@ export class Room {
 				fragment: {
 					id: inbox.fragId,
 					content: inbox.content,
-					isCorrupt: inbox.isCorrupt,
-				} satisfies Fragment,
+					isCorrupt: inbox.isCorrupt
+				} satisfies Fragment
 			});
 		});
 	}

@@ -2,11 +2,13 @@ import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+const wsPort = process.env.WS_PORT ?? '8080';
+
 export default defineConfig({
 	server: {
 		proxy: {
 			'/ws': {
-				target: 'ws://localhost:8080',
+				target: `ws://localhost:${wsPort}`,
 				ws: true,
 				rewriteWsOrigin: true
 			}

@@ -35,7 +35,7 @@ export interface RoomState {
 }
 
 export type ClientMsg =
-	| { type: 'join'; playerName: string }
+	| { type: 'join'; playerName?: string }
 	| { type: 'ready' }
 	| { type: 'log_fragment'; text: string }
 	| { type: 'arm_ack' }
