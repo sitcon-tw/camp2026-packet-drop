@@ -170,6 +170,7 @@ export class Room {
 	// Submit text answer → if correct, advance question or complete
 	submitAnswer(playerId: string, text: string): void {
 		if (this.state.phase !== 'answer' || !this.currentMessage) return;
+		if (this.roundTimer) return;
 		const coolUntil = this.submitCooldown.get(playerId) ?? 0;
 		if (Date.now() < coolUntil) {
 			this.send(playerId, { type: 'error', message: '提交冷卻中' });
