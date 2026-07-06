@@ -50,8 +50,10 @@ export class Room {
 	private submitCooldown = new Map<string, number>();
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private playerRemovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private redistTimer: ReturnType<typeof setTimeout> | null = null;
 	private roundTimer: ReturnType<typeof setTimeout> | null = null;
+	private roomResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(roomId: string) {
 		this.state = this.freshState(roomId);
@@ -60,10 +62,15 @@ export class Room {
 	// ── Public API ────────────────────────────────────────────────
 
 	addPlayer(playerId: string, ws: WS): void {
+		this.cancelRoomReset();
+		this.cancelPlayerRemoval(playerId);
 		this.wsMap.set(playerId, ws);
 		const existing = this.state.players.find((p) => p.id === playerId);
 		if (existing) {
+			existing.isConnected = true;
+			if (this.maybeStartGame()) return;
 			this.resync(playerId);
+			this.broadcastState();
 			return;
 		}
 		if (this.state.phase !== 'lobby') {
@@ -71,10 +78,11 @@ export class Room {
 			this.send(playerId, { type: 'state', room: this.state });
 			return;
 		}
-		const name = `P${this.state.players.length + 1}`;
+		const name = this.nextPlayerName();
 		this.state.players.push({
 			id: playerId,
 			name,
+			isConnected: true,
 			isReady: false,
 			hasLogged: false,
 			isArmed: false,
@@ -88,10 +96,7 @@ export class Room {
 		const p = this.findPlayer(playerId);
 		if (!p) return;
 		p.isReady = true;
-		const n = this.state.players.length;
-		if (n >= CONFIG.min_players && this.state.players.every((pl) => pl.isReady)) {
-			this.startGame();
-		} else {
+		if (!this.maybeStartGame()) {
 			this.broadcastState();
 		}
 	}
@@ -207,27 +212,21 @@ export class Room {
 		// Guard against stale close events: if a newer WS already replaced this one, skip.
 		if (this.wsMap.get(playerId) !== ws) return;
 		this.wsMap.delete(playerId);
-		if (this.state.phase === 'lobby') {
-			this.state.players = this.state.players.filter((p) => p.id !== playerId);
+		const p = this.findPlayer(playerId);
+		if (p) {
+			p.isConnected = false;
+			p.isArmed = false;
 		}
-		// Reset to lobby when no one is connected (room reuse between sessions)
+		this.armTime.delete(playerId);
+		const disarmTimer = this.disarmTimers.get(playerId);
+		if (disarmTimer) clearTimeout(disarmTimer);
+		this.disarmTimers.delete(playerId);
+
+		if (this.state.phase === 'lobby') {
+			this.schedulePlayerRemoval(playerId);
+		}
 		if (this.wsMap.size === 0) {
-			this.state = this.freshState(this.state.roomId);
-			this.questions = [];
-			this.currentMessage = null;
-			this.internalFrags = [];
-			this.playerInboxes.clear();
-			this.submitCooldown.clear();
-			this.armTime.clear();
-			this.clearDisarmTimers();
-			if (this.redistTimer) {
-				clearTimeout(this.redistTimer);
-				this.redistTimer = null;
-			}
-			if (this.roundTimer) {
-				clearTimeout(this.roundTimer);
-				this.roundTimer = null;
-			}
+			this.scheduleRoomReset();
 			return;
 		}
 		this.broadcastState();
@@ -257,7 +256,6 @@ export class Room {
 			round: 0,
 			gameRound: 0,
 			maxRounds: MAX_ROUNDS,
-			minPlayers: CONFIG.min_players,
 			players: [],
 			buffer: [],
 			totalFragments: 0,
@@ -406,6 +404,86 @@ export class Room {
 	private clearDisarmTimers(): void {
 		this.disarmTimers.forEach((t) => clearTimeout(t));
 		this.disarmTimers.clear();
+	}
+
+	private schedulePlayerRemoval(playerId: string): void {
+		this.cancelPlayerRemoval(playerId);
+		const timer = setTimeout(() => {
+			this.playerRemovalTimers.delete(playerId);
+			if (this.wsMap.has(playerId) || this.state.phase !== 'lobby') return;
+			this.state.players = this.state.players.filter((p) => p.id !== playerId);
+			this.playerInboxes.delete(playerId);
+			this.submitCooldown.delete(playerId);
+			if (!this.maybeStartGame()) this.broadcastState();
+		}, CONFIG.reconnect_grace_ms);
+		this.playerRemovalTimers.set(playerId, timer);
+	}
+
+	private cancelPlayerRemoval(playerId: string): void {
+		const timer = this.playerRemovalTimers.get(playerId);
+		if (!timer) return;
+		clearTimeout(timer);
+		this.playerRemovalTimers.delete(playerId);
+	}
+
+	private clearPlayerRemovalTimers(): void {
+		this.playerRemovalTimers.forEach((t) => clearTimeout(t));
+		this.playerRemovalTimers.clear();
+	}
+
+	private scheduleRoomReset(): void {
+		if (this.roomResetTimer) return;
+		this.roomResetTimer = setTimeout(() => {
+			this.roomResetTimer = null;
+			if (this.wsMap.size > 0) return;
+			this.resetRoom();
+		}, CONFIG.reconnect_grace_ms);
+	}
+
+	private cancelRoomReset(): void {
+		if (!this.roomResetTimer) return;
+		clearTimeout(this.roomResetTimer);
+		this.roomResetTimer = null;
+	}
+
+	private resetRoom(): void {
+		this.state = this.freshState(this.state.roomId);
+		this.questions = [];
+		this.currentMessage = null;
+		this.internalFrags = [];
+		this.playerInboxes.clear();
+		this.submitCooldown.clear();
+		this.armTime.clear();
+		this.clearDisarmTimers();
+		this.clearPlayerRemovalTimers();
+		if (this.redistTimer) {
+			clearTimeout(this.redistTimer);
+			this.redistTimer = null;
+		}
+		if (this.roundTimer) {
+			clearTimeout(this.roundTimer);
+			this.roundTimer = null;
+		}
+	}
+
+	private maybeStartGame(): boolean {
+		if (this.state.phase !== 'lobby') return false;
+		if (
+			this.state.players.length > 0 &&
+			this.state.players.every((p) => p.isConnected && p.isReady)
+		) {
+			this.startGame();
+			return true;
+		}
+		return false;
+	}
+
+	private nextPlayerName(): string {
+		const used = new Set(this.state.players.map((p) => p.name));
+		for (let i = 1; ; i++) {
+			const name = `P${i}`;
+			if (!used.has(name)) return name;
+		}
 	}
 
 	private findPlayer(id: string): Player | undefined {

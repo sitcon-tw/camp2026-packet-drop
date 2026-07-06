@@ -12,6 +12,7 @@ export interface Fragment {
 export interface Player {
 	id: string;
 	name: string;
+	isConnected: boolean;
 	isReady: boolean;
 	hasLogged: boolean;
 	isArmed: boolean;
@@ -24,7 +25,6 @@ export interface RoomState {
 	round: number; // retransmit round within current question
 	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
 	maxRounds: number; // always 2
-	minPlayers: number;
 	players: Player[];
 	// Shared notes by slot. null = slot not yet transcribed. Free text — never validated.
 	buffer: (string | null)[];

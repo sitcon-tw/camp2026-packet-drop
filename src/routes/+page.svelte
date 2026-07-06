@@ -3,7 +3,6 @@
 	import { resolve } from '$app/paths';
 
 	const TEAM_COUNT = 10;
-	const MIN_PLAYERS = 5;
 	const QUESTION_COUNT = 2;
 	const teams = Array.from({ length: TEAM_COUNT }, (_, i) => String(i + 1).padStart(2, '0'));
 	const packetSteps = ['RX', 'CRC', 'ACK', 'RETX', 'DONE'];
@@ -47,7 +46,7 @@
 
 		<div class="team-heading">
 			<p>選擇隊伍編號</p>
-			<span>{MIN_PLAYERS}+ PLAYERS / {QUESTION_COUNT} QUESTIONS</span>
+			<span>ALL READY / {QUESTION_COUNT} QUESTIONS</span>
 		</div>
 
 		<div class="team-grid">

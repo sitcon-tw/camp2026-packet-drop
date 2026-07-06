@@ -50,7 +50,7 @@ Every mechanic maps to a real networking concept.
 
 ## 3. Players, channel, and shared space
 
-- **Players** — `N` symmetric receivers. No special roles. `N ≥ MIN_PLAYERS` (default 5).
+- **Players** — `N` symmetric receivers. No special roles. The game starts when every connected player in the lobby is ready.
 - **Channel / Server** — authoritative. Owns the question, fragmentation, the corruption RNG, the ACK barrier, and answer verification. Players only send _intents_; the server owns _truth_.
 - **Shared space** — synced live to everyone:
   1. **Inbox** — the single fragment _you_ received this round. **Visible for `REVEAL_MS` only**, then it vanishes.
@@ -140,15 +140,15 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
 ## 7. Tunable parameters (`.env`)
 
-| Env var             | Meaning                                          | Default |
-| ------------------- | ------------------------------------------------ | ------- |
-| `WS_PORT`           | Bun WebSocket port                               | `8080`  |
-| `MIN_PLAYERS`       | Minimum players to start                         | `5`     |
-| `REVEAL_MS`         | How long a fragment stays visible (flash window) | `15000` |
-| `T_ACK`             | ms a player stays armed (all must overlap)       | `3000`  |
-| `CORRUPTION_CHANCE` | Per-fragment corruption probability `0.0–1.0`    | `0.4`   |
-| `GUARANTEE_CORRUPT` | Force ≥1 corruption in round 1                   | `true`  |
-| `WRONG_PENALTY`     | ms cooldown after a wrong answer                 | `3000`  |
+| Env var              | Meaning                                          | Default |
+| -------------------- | ------------------------------------------------ | ------- |
+| `WS_PORT`            | Bun WebSocket port                               | `8080`  |
+| `REVEAL_MS`          | How long a fragment stays visible (flash window) | `15000` |
+| `RECONNECT_GRACE_MS` | ms to preserve a player slot after refresh       | `5000`  |
+| `T_ACK`              | ms a player stays armed (all must overlap)       | `3000`  |
+| `CORRUPTION_CHANCE`  | Per-fragment corruption probability `0.0–1.0`    | `0.4`   |
+| `GUARANTEE_CORRUPT`  | Force ≥1 corruption in round 1                   | `true`  |
+| `WRONG_PENALTY`      | ms cooldown after a wrong answer                 | `3000`  |
 
 > Questions per game is fixed at **2** (`MAX_ROUNDS` in `src/lib/config.ts`).
 
@@ -156,14 +156,15 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 
 ## 8. Edge cases & rulings
 
-| Situation                                | Ruling                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------ |
-| A player is AFK ⇒ barrier can never fire | The room waits; coordinate before starting or reconnect/reset the room.        |
-| Player's fragment is corrupt             | Transcription input disabled; they ACK for a retransmit. No buffer pollution.  |
-| Player mistypes their note               | Allowed — notes are never validated. Verification is only the final answer.    |
-| Notes too gappy to answer                | All players vote **重新開始** to re-flash the current question.                |
-| Mid-round disconnect                     | On reconnect, resync from server state (notes + current inbox). No state lost. |
-| Clue count ≠ player count (Q2)           | Extra clues spread across retransmit rounds; fewer clues → some players share. |
+| Situation                                | Ruling                                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| A player is AFK ⇒ barrier can never fire | The room waits; coordinate before starting or reconnect/reset the room.                         |
+| Player's fragment is corrupt             | Transcription input disabled; they ACK for a retransmit. No buffer pollution.                   |
+| Player mistypes their note               | Allowed — notes are never validated. Verification is only the final answer.                     |
+| Notes too gappy to answer                | All players vote **重新開始** to re-flash the current question.                                 |
+| Browser refresh / quick reconnect        | The player slot is preserved for `RECONNECT_GRACE_MS`, so the same tab keeps its player number. |
+| Mid-round disconnect                     | On reconnect within the grace window, resync from server state (notes + current inbox).         |
+| Clue count ≠ player count (Q2)           | Extra clues spread across retransmit rounds; fewer clues → some players share.                  |
 
 ---
 
@@ -234,7 +235,6 @@ interface RoomState {
 	round: number; // retransmit round within current question
 	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
 	maxRounds: number; // always 2
-	minPlayers: number;
 	players: Player[];
 	buffer: (string | null)[]; // shared notes by slot; null = not yet transcribed
 	totalFragments: number;

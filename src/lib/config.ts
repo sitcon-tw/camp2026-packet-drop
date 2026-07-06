@@ -7,9 +7,10 @@ export const CONFIG = {
 	guarantee_first_corrupt: process.env['GUARANTEE_CORRUPT'] !== 'false',
 	corruption_chance: parseFloat(process.env['CORRUPTION_CHANCE'] ?? '0.4'),
 	corrupt_chars: '▓░█▒■□▪▫●○◆◇✕✗',
-	min_players: parseInt(process.env['MIN_PLAYERS'] ?? '5'),
 	// How long a delivered fragment stays visible before it vanishes (client flash window)
-	reveal_ms: parseInt(process.env['REVEAL_MS'] ?? '15000')
+	reveal_ms: parseInt(process.env['REVEAL_MS'] ?? '15000'),
+	// How long to keep a disconnected player slot for browser refresh/reconnect.
+	reconnect_grace_ms: parseInt(process.env['RECONNECT_GRACE_MS'] ?? '5000')
 };
 
 // Only TWO questions per game: a sentence-memory round, then a logic-clue round.

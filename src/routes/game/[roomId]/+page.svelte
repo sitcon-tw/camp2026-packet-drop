@@ -253,11 +253,15 @@
 
 			<ul class="player-list">
 				{#each room.players as p (p.id)}
-					<li class:me={p.id === playerId}>
-						<span class="dot" class:on={p.isReady}></span>
+					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
+						<span class="dot" class:on={p.isReady} class:offline={!p.isConnected}></span>
 						<span>{p.name}</span>
 						{#if p.id === playerId}<span class="you">you</span>{/if}
-						{#if p.isReady}<span class="tag-ready">READY</span>{/if}
+						{#if !p.isConnected}
+							<span class="tag-offline">RECONNECTING</span>
+						{:else if p.isReady}
+							<span class="tag-ready">READY</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -267,7 +271,7 @@
 			{:else}
 				<p class="muted center">等待其他玩家就緒</p>
 			{/if}
-			<p class="hint">需要 ≥{room.minPlayers} 位玩家，共 {room.maxRounds} 題</p>
+			<p class="hint">全員 READY 後開始，共 {room.maxRounds} 題</p>
 		</section>
 	{:else if room.phase === 'inspect'}
 		<section class="panel">
@@ -363,10 +367,14 @@
 
 			<ul class="player-mini">
 				{#each room.players as p (p.id)}
-					<li class:me={p.id === playerId}>
-						<span class="dot sm" class:on={p.isArmed}></span>
+					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
+						<span class="dot sm" class:on={p.isArmed} class:offline={!p.isConnected}></span>
 						{p.name}
-						{#if p.hasLogged}<span class="tag-logged">logged</span>{/if}
+						{#if !p.isConnected}
+							<span class="tag-offline">offline</span>
+						{:else if p.hasLogged}
+							<span class="tag-logged">logged</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -436,9 +444,13 @@
 
 			<ul class="player-mini spaced">
 				{#each room.players as p (p.id)}
-					<li class:me={p.id === playerId}>
+					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
 						{p.name}
-						{#if p.wantsRestart}<span class="tag-restart">restart</span>{/if}
+						{#if !p.isConnected}
+							<span class="tag-offline">offline</span>
+						{:else if p.wantsRestart}
+							<span class="tag-restart">restart</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -675,16 +687,29 @@
 		border-color: rgba(73, 211, 255, 0.55);
 	}
 
+	.player-list li.offline,
+	.player-mini li.offline {
+		opacity: 0.58;
+	}
+
 	.you {
 		color: #49d3ff;
 		font-size: 0.68rem;
 	}
 
-	.tag-ready {
+	.tag-ready,
+	.tag-offline {
 		margin-left: auto;
-		color: #8ee66b;
 		font-size: 0.68rem;
 		font-weight: 800;
+	}
+
+	.tag-ready {
+		color: #8ee66b;
+	}
+
+	.tag-offline {
+		color: #ffbf57;
 	}
 
 	.packet-window {
@@ -895,13 +920,19 @@
 	}
 
 	.tag-logged,
-	.tag-restart {
+	.tag-restart,
+	.player-mini .tag-offline {
 		color: #8ee66b;
 		font-size: 0.66rem;
+		margin-left: 0;
 	}
 
 	.tag-restart {
 		color: #ff9bc6;
+	}
+
+	.player-mini .tag-offline {
+		color: #ffbf57;
 	}
 
 	.prompt-box {
@@ -1037,6 +1068,12 @@
 	.dot.on {
 		background: #8ee66b;
 		box-shadow: 0 0 12px rgba(142, 230, 107, 0.8);
+	}
+
+	.dot.offline,
+	.dot.sm.offline {
+		background: #ffbf57;
+		box-shadow: none;
 	}
 
 	.dot.sm.on {
