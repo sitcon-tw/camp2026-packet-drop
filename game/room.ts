@@ -201,6 +201,7 @@ export class Room {
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private choiceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private choiceAfkTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private playerRemovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private redistTimer: ReturnType<typeof setTimeout> | null = null;
 	private roundTimer: ReturnType<typeof setTimeout> | null = null;
@@ -310,6 +311,7 @@ export class Room {
 		}
 
 		p.hasLogged = true;
+		this.clearChoiceAfkTimer(playerId);
 		this.state.buffer[inbox.slot] = inbox.cleanContent;
 		this.send(playerId, { type: 'log_ok' });
 		this.send(playerId, { type: 'toast', text: '選對了，已寫入共享筆記 ✓', kind: 'success' });
@@ -611,6 +613,16 @@ export class Room {
 	private clearChoiceTimers(): void {
 		this.choiceTimers.forEach((t) => clearTimeout(t));
 		this.choiceTimers.clear();
+		this.choiceAfkTimers.forEach((t) => clearTimeout(t));
+		this.choiceAfkTimers.clear();
+	}
+
+	private clearChoiceAfkTimer(playerId: string): void {
+		const t = this.choiceAfkTimers.get(playerId);
+		if (t) {
+			clearTimeout(t);
+			this.choiceAfkTimers.delete(playerId);
+		}
 	}
 
 	private scheduleOrSendChoices(playerId: string, inbox: PlayerInbox): void {
@@ -635,6 +647,17 @@ export class Room {
 			return;
 		inbox.choiceSent = true;
 		this.send(playerId, { type: 'choice_set', fragId: inbox.fragId, choices: inbox.choices });
+		if (
+			CONFIG.choice_afk_ms > 0 &&
+			this.state.questionType === 'clues'
+		) {
+			this.clearChoiceAfkTimer(playerId);
+			const afkTimer = setTimeout(() => {
+				this.choiceAfkTimers.delete(playerId);
+				this.send(playerId, { type: 'choice_expired' });
+			}, CONFIG.choice_afk_ms);
+			this.choiceAfkTimers.set(playerId, afkTimer);
+		}
 	}
 
 	private schedulePlayerRemoval(playerId: string): void {

@@ -20,6 +20,7 @@
 	let choices = $state<FragmentChoice[]>([]);
 	let choiceFragId = $state('');
 	let selectedChoiceId = $state('');
+	let choiceExpired = $state(false);
 
 	// Flash / reveal countdown
 	let revealLeft = $state(0);
@@ -95,6 +96,7 @@
 					choices = [];
 					choiceFragId = '';
 					selectedChoiceId = '';
+					choiceExpired = false;
 					startReveal();
 					break;
 				case 'choice_set':
@@ -130,6 +132,12 @@
 					}, penalty);
 					break;
 				}
+				case 'choice_expired':
+					choiceExpired = true;
+					choices = [];
+					choiceFragId = '';
+					addToast('已逾時，卡片已消失', 'error');
+					break;
 				case 'complete':
 					addToast('任務完成！', 'success');
 					break;
@@ -337,6 +345,8 @@
 					<span>
 						{#if inbox?.isCorrupt}
 							請 ACK 重傳
+						{:else if choiceExpired}
+							已逾時
 						{:else if me?.hasLogged}
 							已記錄
 						{:else if choices.length > 0}
@@ -348,7 +358,9 @@
 						{/if}
 					</span>
 				</div>
-				{#if inbox?.isCorrupt}
+				{#if choiceExpired}
+					<p class="choice-empty">已逾時，卡片已消失 — 請 ACK 重傳獲取新封包</p>
+				{:else if inbox?.isCorrupt}
 					<p class="choice-empty">封包損毀，無法辨識；請全員 ARM ACK 重傳。</p>
 				{:else if choices.length > 0 && choiceFragId === inbox?.id}
 					<div class="choice-grid">

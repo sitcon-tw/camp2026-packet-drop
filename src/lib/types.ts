@@ -84,6 +84,7 @@ export type ServerMsg =
 	| { type: 'inbox'; fragment: Fragment }
 	| { type: 'choice_set'; fragId: string; choices: FragmentChoice[] }
 	| { type: 'choice_wrong'; penalty: number }
+	| { type: 'choice_expired' }
 	| { type: 'log_ok' }
 	| { type: 'log_reject'; reason: string }
 	| { type: 'answer_wrong'; penalty: number }

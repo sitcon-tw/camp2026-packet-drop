@@ -11,6 +11,8 @@ export const CONFIG = {
 	reveal_ms: parseInt(process.env['REVEAL_MS'] ?? '15000'),
 	choice_count: parseInt(process.env['CHOICE_COUNT'] ?? '8'),
 	choice_wrong_penalty: parseInt(process.env['CHOICE_WRONG_PENALTY'] ?? '1200'),
+	// AFK timeout for Q2 (clues) choice selection in ms; 0 = disabled
+	choice_afk_ms: parseInt(process.env['CHOICE_AFK_MS'] ?? '0'),
 	// How long to keep a disconnected player slot for browser refresh/reconnect.
 	reconnect_grace_ms: parseInt(process.env['RECONNECT_GRACE_MS'] ?? '5000')
 };
