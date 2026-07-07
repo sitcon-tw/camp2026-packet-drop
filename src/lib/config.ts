@@ -9,6 +9,8 @@ export const CONFIG = {
 	corrupt_chars: '▓░█▒■□▪▫●○◆◇✕✗',
 	// How long a delivered fragment stays visible before it vanishes (client flash window)
 	reveal_ms: parseInt(process.env['REVEAL_MS'] ?? '15000'),
+	choice_count: parseInt(process.env['CHOICE_COUNT'] ?? '8'),
+	choice_wrong_penalty: parseInt(process.env['CHOICE_WRONG_PENALTY'] ?? '1200'),
 	// How long to keep a disconnected player slot for browser refresh/reconnect.
 	reconnect_grace_ms: parseInt(process.env['RECONNECT_GRACE_MS'] ?? '5000')
 };
@@ -18,7 +20,7 @@ export const MAX_ROUNDS = 2;
 
 export type QuestionType = 'sentence' | 'clues';
 
-// Q1: a sentence split into char fragments, flashed, transcribed from memory.
+// Q1: a sentence split into char fragments, flashed, then recognized from choices.
 export interface SentenceQuestion {
 	type: 'sentence';
 	sentence: string; // split into N fragments, distributed one per player
@@ -26,7 +28,7 @@ export interface SentenceQuestion {
 	answer: string; // expected answer (normalized compare)
 }
 
-// Q2: a logic puzzle whose CLUES are the fragments, flashed, transcribed from memory.
+// Q2: a logic puzzle whose CLUES are the fragments, flashed, then recognized from choices.
 export interface CluesQuestion {
 	type: 'clues';
 	clues: string[]; // each clue is one fragment, distributed across players

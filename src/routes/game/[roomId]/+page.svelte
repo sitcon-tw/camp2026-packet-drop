@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { Fragment, RoomState } from '$lib/types';
+	import type { Fragment, FragmentChoice, RoomState } from '$lib/types';
 
 	const { data } = $props<{ data: { roomId: string } }>();
 	const roomId = $derived(data.roomId);
@@ -14,9 +14,12 @@
 	let inbox = $state<Fragment | null>(null);
 	let toasts = $state<{ id: number; text: string; kind: string }[]>([]);
 	let submitCooldownUntil = $state(0);
+	let choiceCooldownUntil = $state(0);
 	let wsReady = $state(false);
 	let answerInput = $state('');
-	let noteInput = $state('');
+	let choices = $state<FragmentChoice[]>([]);
+	let choiceFragId = $state('');
+	let selectedChoiceId = $state('');
 
 	// Flash / reveal countdown
 	let revealLeft = $state(0);
@@ -28,6 +31,7 @@
 	// ── derived ──────────────────────────────────────────────────
 	const me = $derived(room?.players.find((p) => p.id === playerId));
 	const cooldownActive = $derived(submitCooldownUntil > Date.now());
+	const choiceCooldownActive = $derived(choiceCooldownUntil > Date.now());
 	const armedCount = $derived(room?.players.filter((p) => p.isArmed).length ?? 0);
 	const filledCount = $derived(room?.buffer.filter((b) => b !== null).length ?? 0);
 	const restartCount = $derived(room?.players.filter((p) => p.wantsRestart).length ?? 0);
@@ -88,11 +92,20 @@
 					break;
 				case 'inbox':
 					inbox = msg.fragment as Fragment;
-					noteInput = '';
+					choices = [];
+					choiceFragId = '';
+					selectedChoiceId = '';
 					startReveal();
 					break;
+				case 'choice_set':
+					choiceFragId = msg.fragId as string;
+					choices = msg.choices as FragmentChoice[];
+					break;
 				case 'log_ok':
-					addToast('已記錄到共享筆記 ✓', 'success');
+					selectedChoiceId = '';
+					choices = [];
+					choiceFragId = '';
+					addToast('已寫入共享筆記 ✓', 'success');
 					break;
 				case 'log_reject':
 					addToast('封包損毀，無法記錄', 'error');
@@ -105,6 +118,15 @@
 					submitCooldownUntil = Date.now() + penalty;
 					setTimeout(() => {
 						submitCooldownUntil = 0;
+					}, penalty);
+					break;
+				}
+				case 'choice_wrong': {
+					const penalty = msg.penalty as number;
+					choiceCooldownUntil = Date.now() + penalty;
+					selectedChoiceId = '';
+					setTimeout(() => {
+						choiceCooldownUntil = 0;
 					}, penalty);
 					break;
 				}
@@ -131,7 +153,9 @@
 		if (key && key !== knownInspectKey) {
 			knownInspectKey = key;
 			inbox = null;
-			noteInput = '';
+			choices = [];
+			choiceFragId = '';
+			selectedChoiceId = '';
 		}
 		if (!key) knownInspectKey = '';
 	});
@@ -175,16 +199,14 @@
 	}
 
 	// ── actions ──────────────────────────────────────────────────
-	function ready() {
-		send({ type: 'ready' });
-	}
-	function logFragment() {
-		if (!noteInput.trim()) return;
-		send({ type: 'log_fragment', text: noteInput.trim() });
-	}
 	function armAck() {
 		if (me?.isArmed) return;
 		send({ type: 'arm_ack' });
+	}
+	function selectChoice(choiceId: string) {
+		if (choiceCooldownActive || selectedChoiceId || me?.hasLogged) return;
+		selectedChoiceId = choiceId;
+		send({ type: 'select_fragment_choice', choiceId });
 	}
 	function submitAnswer() {
 		if (cooldownActive || !answerInput.trim()) return;
@@ -196,9 +218,6 @@
 	}
 	function onAnswerKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') submitAnswer();
-	}
-	function onNoteKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') logFragment();
 	}
 </script>
 
@@ -254,24 +273,20 @@
 			<ul class="player-list">
 				{#each room.players as p (p.id)}
 					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
-						<span class="dot" class:on={p.isReady} class:offline={!p.isConnected}></span>
+						<span class="dot" class:on={p.isConnected} class:offline={!p.isConnected}></span>
 						<span>{p.name}</span>
 						{#if p.id === playerId}<span class="you">you</span>{/if}
 						{#if !p.isConnected}
 							<span class="tag-offline">RECONNECTING</span>
-						{:else if p.isReady}
-							<span class="tag-ready">READY</span>
+						{:else}
+							<span class="tag-online">ONLINE</span>
 						{/if}
 					</li>
 				{/each}
 			</ul>
 
-			{#if !me?.isReady}
-				<button class="btn primary wide" type="button" onclick={ready}>READY</button>
-			{:else}
-				<p class="muted center">等待其他玩家就緒</p>
-			{/if}
-			<p class="hint">全員 READY 後開始，共 {room.maxRounds} 題</p>
+			<p class="muted center">等待管理員開始</p>
+			<p class="hint">管理員開始後進入遊戲，共 {room.maxRounds} 題</p>
 		</section>
 	{:else if room.phase === 'inspect'}
 		<section class="panel">
@@ -302,7 +317,7 @@
 			<div class="packet-window" class:corrupt={inbox?.isCorrupt} class:gone={fragmentHidden}>
 				{#if inbox}
 					{#if fragmentHidden}
-						<span class="muted">封包已消失，請憑記憶輸入</span>
+						<span class="muted">封包已消失，請從選項找出正確片段</span>
 					{:else}
 						<span class="mono large">{inbox.content}</span>
 						{#if inbox.isCorrupt}
@@ -316,25 +331,44 @@
 				{/if}
 			</div>
 
-			<div class="note-row">
-				<input
-					class="answer-input"
-					bind:value={noteInput}
-					placeholder={inbox?.isCorrupt ? '封包損毀，無法記錄' : '輸入你看到的片段'}
-					disabled={!inbox || inbox.isCorrupt}
-					autocomplete="off"
-					autocapitalize="off"
-					spellcheck={false}
-					onkeydown={onNoteKeydown}
-				/>
-				<button
-					class="btn log"
-					type="button"
-					onclick={logFragment}
-					disabled={!inbox || inbox.isCorrupt || !noteInput.trim()}
-				>
-					記錄
-				</button>
+			<div class="choice-panel">
+				<div class="section-label">
+					<span>片段辨識</span>
+					<span>
+						{#if inbox?.isCorrupt}
+							請 ACK 重傳
+						{:else if me?.hasLogged}
+							已記錄
+						{:else if choices.length > 0}
+							選出正確片段
+						{:else if fragmentHidden}
+							載入選項中
+						{:else}
+							記住封包
+						{/if}
+					</span>
+				</div>
+				{#if inbox?.isCorrupt}
+					<p class="choice-empty">封包損毀，無法辨識；請全員 ARM ACK 重傳。</p>
+				{:else if choices.length > 0 && choiceFragId === inbox?.id}
+					<div class="choice-grid">
+						{#each choices as choice (choice.id)}
+							<button
+								class="choice-btn"
+								class:selected={selectedChoiceId === choice.id}
+								type="button"
+								onclick={() => selectChoice(choice.id)}
+								disabled={choiceCooldownActive || !!selectedChoiceId || !!me?.hasLogged}
+							>
+								{choice.text}
+							</button>
+						{/each}
+					</div>
+				{:else}
+					<p class="choice-empty">
+						{fragmentHidden ? '等待伺服器發送選項…' : '封包消失後會出現相似選項。'}
+					</p>
+				{/if}
 			</div>
 
 			<button class="btn ack wide" type="button" onclick={armAck} disabled={!!me?.isArmed}>
@@ -697,14 +731,14 @@
 		font-size: 0.68rem;
 	}
 
-	.tag-ready,
+	.tag-online,
 	.tag-offline {
 		margin-left: auto;
 		font-size: 0.68rem;
 		font-weight: 800;
 	}
 
-	.tag-ready {
+	.tag-online {
 		color: #8ee66b;
 	}
 
@@ -766,7 +800,6 @@
 		line-height: 1.55;
 	}
 
-	.note-row,
 	.answer-row {
 		display: flex;
 		gap: 0.6rem;
@@ -832,12 +865,6 @@
 		background: #a8f27e;
 	}
 
-	.btn.log {
-		flex-shrink: 0;
-		border-color: rgba(73, 211, 255, 0.42);
-		color: #49d3ff;
-	}
-
 	.btn.ack {
 		border-color: rgba(255, 191, 87, 0.62);
 		color: #ffbf57;
@@ -857,6 +884,61 @@
 
 	.progress-block {
 		margin-bottom: 0.95rem;
+	}
+
+	.choice-panel {
+		margin-bottom: 0.95rem;
+	}
+
+	.choice-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.55rem;
+	}
+
+	.choice-btn {
+		min-height: 64px;
+		border: 1px solid rgba(238, 247, 242, 0.14);
+		border-radius: 8px;
+		color: #eef7f2;
+		cursor: pointer;
+		background: #081312;
+		padding: 0.7rem;
+		text-align: left;
+		font-weight: 800;
+		line-height: 1.35;
+		word-break: break-word;
+		transition:
+			transform 0.12s ease,
+			border-color 0.12s ease,
+			background 0.12s ease;
+	}
+
+	.choice-btn:not(:disabled):hover {
+		transform: translateY(-1px);
+		border-color: #49d3ff;
+		background: #0d1c1a;
+	}
+
+	.choice-btn.selected {
+		border-color: #8ee66b;
+		background: rgba(142, 230, 107, 0.14);
+	}
+
+	.choice-btn:disabled {
+		opacity: 0.62;
+		cursor: not-allowed;
+	}
+
+	.choice-empty {
+		margin: 0;
+		border: 1px dashed rgba(73, 211, 255, 0.24);
+		border-radius: 8px;
+		color: #8aa29d;
+		background: #06100f;
+		padding: 0.8rem;
+		font-size: 0.82rem;
+		line-height: 1.5;
 	}
 
 	.section-label {
@@ -1120,7 +1202,6 @@
 
 		.topbar,
 		.panel-head,
-		.note-row,
 		.answer-row {
 			flex-direction: column;
 			align-items: stretch;
@@ -1146,6 +1227,10 @@
 			min-height: 132px;
 			flex-direction: column;
 			align-items: flex-start;
+		}
+
+		.choice-grid {
+			grid-template-columns: 1fr;
 		}
 
 		.toast-stack {

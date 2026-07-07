@@ -46,7 +46,7 @@
 
 		<div class="team-heading">
 			<p>選擇隊伍編號</p>
-			<span>ALL READY / {QUESTION_COUNT} QUESTIONS</span>
+			<span>ADMIN START / {QUESTION_COUNT} QUESTIONS</span>
 		</div>
 
 		<div class="team-grid">

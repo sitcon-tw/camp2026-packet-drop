@@ -1,4 +1,10 @@
-import type { Fragment, Player, RoomState } from '../src/lib/types.js';
+import type {
+	AdminRoomState,
+	Fragment,
+	FragmentChoice,
+	Player,
+	RoomState
+} from '../src/lib/types.js';
 import { CONFIG, MAX_ROUNDS, Q1_POOL, Q2_POOL, type Question } from '../src/lib/config.js';
 
 interface InternalFrag {
@@ -12,7 +18,52 @@ interface PlayerInbox {
 	content: string;
 	isCorrupt: boolean;
 	slot: number;
+	cleanContent: string;
+	choices: FragmentChoice[];
+	correctChoiceId: string | null;
+	deliveredAt: number;
+	choiceSent: boolean;
 }
+
+const NAME_SWAPS = [
+	'Wolf',
+	'WoIf',
+	'W0lf',
+	'Janice',
+	'Jarnice',
+	'Tang',
+	'Teng',
+	'CC',
+	'C C',
+	'64',
+	'6A',
+	'NT',
+	'N T'
+];
+const CHINESE_SWAPS: [string, string[]][] = [
+	['左手邊', ['右手邊', '左邊', '左手側']],
+	['右手邊', ['左手邊', '右邊', '右手側']],
+	['正對面', ['斜對面', '旁邊', '正前方']],
+	['緊鄰', ['隔著一人', '靠近', '不相鄰']],
+	['之前', ['之後', '前面', '後面']],
+	['之後', ['之前', '後面', '前面']],
+	['沒有', ['有', '不是', '不只']],
+	['不是', ['是', '沒有', '不在']],
+	['兩旁', ['對面', '左邊', '右邊']],
+	['隔著一個人', ['緊鄰著', '隔著兩個人', '正對面']]
+];
+const CHAR_SWAPS: [string, string[]][] = [
+	['問', ['間', '閃', '們']],
+	['參', ['叁', '滲', '參加']],
+	['營', ['螢', '贏', '營隊']],
+	['辦', ['辨', '瓣', '辧']],
+	['單', ['車', '軍', '單位']],
+	['縮', ['宿', '索', '縮寫']],
+	['什', ['甚', '件', '什麼']],
+	['麼', ['麻', '麽', '嗎']],
+	['左', ['右', '佐', '在']],
+	['右', ['左', '佑', '又']]
+];
 
 function corrupt(s: string): string {
 	const c = CONFIG.corrupt_chars;
@@ -38,24 +89,125 @@ function normalize(s: string): string {
 	return s.trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function choiceId(): string {
+	return crypto.randomUUID();
+}
+
+function replaceFirstMatch(text: string, swaps: [string, string[]][]): string[] {
+	const out = new Set<string>();
+	for (const [from, replacements] of swaps) {
+		if (!text.includes(from)) continue;
+		for (const to of replacements) {
+			out.add(text.replace(from, to));
+		}
+	}
+	return [...out];
+}
+
+function mutateByName(text: string): string[] {
+	const names = ['Wolf', 'Janice', 'CC', '家誠', '螢光', 'NT', '64', 'Tang', '金魚', '牛排'];
+	const visibleNames = names.filter((name) => text.includes(name));
+	const out = new Set<string>();
+	for (const from of visibleNames) {
+		for (const to of names) {
+			if (from !== to) out.add(text.replace(from, to));
+		}
+	}
+	for (const name of NAME_SWAPS) {
+		if (text.includes('Wolf')) out.add(text.replace('Wolf', name));
+		if (text.includes('Tang')) out.add(text.replace('Tang', name));
+		if (text.includes('Janice')) out.add(text.replace('Janice', name));
+	}
+	return [...out];
+}
+
+function mutateByChars(text: string): string[] {
+	const out = new Set<string>();
+	out.add(...replaceFirstMatch(text, CHAR_SWAPS));
+	out.add(...replaceFirstMatch(text, CHINESE_SWAPS));
+
+	if (text.length > 2) {
+		const mid = Math.max(1, Math.floor(text.length / 2) - 1);
+		out.add(text.slice(0, mid) + text.slice(mid + 1));
+		if (mid + 1 < text.length) {
+			out.add(text.slice(0, mid) + text[mid + 1] + text[mid] + text.slice(mid + 2));
+		}
+	}
+	if (text.includes('？')) out.add(text.replace('？', '。'));
+	if (text.includes('。')) out.add(text.replace('。', '？'));
+	if (text.includes('的')) out.add(text.replace('的', '得'));
+	if (text.includes('得')) out.add(text.replace('得', '的'));
+	return [...out];
+}
+
+function buildChoiceTexts(correct: string, allFragments: InternalFrag[]): string[] {
+	const choices = new Set<string>();
+	const add = (value: unknown) => {
+		if (typeof value !== 'string') return;
+		const text = value.trim();
+		if (text && text !== correct) choices.add(text);
+	};
+
+	mutateByName(correct).forEach(add);
+	mutateByChars(correct).forEach(add);
+	allFragments
+		.filter((frag) => frag.cleanContent !== correct)
+		.flatMap((frag) => [
+			frag.cleanContent,
+			...mutateByName(frag.cleanContent).slice(0, 2),
+			...mutateByChars(frag.cleanContent).slice(0, 2)
+		])
+		.forEach(add);
+
+	let fallbackIndex = 1;
+	while (choices.size < Math.max(0, CONFIG.choice_count - 1)) {
+		add(`${correct} ${fallbackIndex}`);
+		fallbackIndex++;
+	}
+
+	return shuffle([...choices]).slice(0, Math.max(0, CONFIG.choice_count - 1));
+}
+
+function buildChoices(
+	correct: string,
+	allFragments: InternalFrag[]
+): {
+	choices: FragmentChoice[];
+	correctChoiceId: string;
+} {
+	const correctChoice = { id: choiceId(), text: correct };
+	const distractors = buildChoiceTexts(correct, allFragments).map((text) => ({
+		id: choiceId(),
+		text
+	}));
+	return {
+		choices: shuffle([correctChoice, ...distractors]),
+		correctChoiceId: correctChoice.id
+	};
+}
+
 type WS = { send(data: string): void; readyState: number };
 
 export class Room {
 	state: RoomState;
+	private onStateChange: () => void;
 	private questions: Question[] = [];
 	private currentMessage: Question | null = null;
 	private internalFrags: InternalFrag[] = [];
 	private playerInboxes = new Map<string, PlayerInbox>();
 	private wsMap = new Map<string, WS>();
 	private submitCooldown = new Map<string, number>();
+	private choiceCooldown = new Map<string, number>();
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private choiceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private playerRemovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private redistTimer: ReturnType<typeof setTimeout> | null = null;
 	private roundTimer: ReturnType<typeof setTimeout> | null = null;
 	private roomResetTimer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(roomId: string) {
+	constructor(roomId: string, onStateChange: () => void = () => {}) {
+		this.onStateChange = onStateChange;
 		this.state = this.freshState(roomId);
 	}
 
@@ -68,7 +220,6 @@ export class Room {
 		const existing = this.state.players.find((p) => p.id === playerId);
 		if (existing) {
 			existing.isConnected = true;
-			if (this.maybeStartGame()) return;
 			this.resync(playerId);
 			this.broadcastState();
 			return;
@@ -83,7 +234,6 @@ export class Room {
 			id: playerId,
 			name,
 			isConnected: true,
-			isReady: false,
 			hasLogged: false,
 			isArmed: false,
 			wantsRestart: false
@@ -91,23 +241,36 @@ export class Room {
 		this.broadcastState();
 	}
 
-	setReady(playerId: string): void {
-		if (this.state.phase !== 'lobby') return;
-		const p = this.findPlayer(playerId);
-		if (!p) return;
-		p.isReady = true;
-		if (!this.maybeStartGame()) {
-			this.broadcastState();
+	startByAdmin(): { ok: true } | { ok: false; message: string } {
+		if (this.state.phase !== 'lobby') {
+			return { ok: false, message: '隊伍已經開始或已完成' };
 		}
+		if (!this.state.players.some((p) => p.isConnected)) {
+			return { ok: false, message: '至少需要 1 位已連線玩家才能開始' };
+		}
+		this.startGame();
+		return { ok: true };
 	}
 
-	// Player transcribes the fragment they (briefly) saw into the shared notes.
-	// Content is NOT validated — it's a collaborative scratchpad. Only corrupt
-	// fragments are rejected, since the player literally cannot read them.
+	forceCompleteByAdmin(): void {
+		this.completeGame(true);
+	}
+
 	logFragment(playerId: string, text: string): void {
+		void text;
+		this.send(playerId, { type: 'error', message: '請使用選項寫入共享筆記' });
+	}
+
+	selectFragmentChoice(playerId: string, choiceId: string): void {
 		if (this.state.phase !== 'inspect') return;
 		const p = this.findPlayer(playerId);
 		if (!p) return;
+
+		const coolUntil = this.choiceCooldown.get(playerId) ?? 0;
+		if (Date.now() < coolUntil) {
+			this.send(playerId, { type: 'error', message: '選項冷卻中' });
+			return;
+		}
 
 		const inbox = this.playerInboxes.get(playerId);
 		if (!inbox) return;
@@ -116,22 +279,23 @@ export class Room {
 			this.send(playerId, { type: 'log_reject', reason: 'CORRUPT' });
 			this.send(playerId, {
 				type: 'toast',
-				text: '封包損毀，無法記錄 — 請 ACK 重傳',
+				text: '封包損毀，無法選擇 — 請 ACK 重傳',
 				kind: 'error'
 			});
 			return;
 		}
 
-		const note = text.trim();
-		if (!note) {
-			this.send(playerId, { type: 'error', message: '請先輸入內容' });
+		if (!inbox.correctChoiceId || choiceId !== inbox.correctChoiceId) {
+			this.choiceCooldown.set(playerId, Date.now() + CONFIG.choice_wrong_penalty);
+			this.send(playerId, { type: 'choice_wrong', penalty: CONFIG.choice_wrong_penalty });
+			this.send(playerId, { type: 'toast', text: '選項錯誤，重新辨識中…', kind: 'error' });
 			return;
 		}
 
 		p.hasLogged = true;
-		this.state.buffer[inbox.slot] = note;
+		this.state.buffer[inbox.slot] = inbox.cleanContent;
 		this.send(playerId, { type: 'log_ok' });
-		this.send(playerId, { type: 'toast', text: '已記錄到共享筆記 ✓', kind: 'success' });
+		this.send(playerId, { type: 'toast', text: '選對了，已寫入共享筆記 ✓', kind: 'success' });
 
 		if (this.filledCount() >= this.state.totalFragments) {
 			this.enterAnswer();
@@ -180,9 +344,7 @@ export class Room {
 		if (normalize(text) === normalize(this.currentMessage.answer)) {
 			this.broadcastAll({ type: 'toast', text: `✓ 答對了！`, kind: 'success' });
 			if (this.state.gameRound >= MAX_ROUNDS) {
-				this.state.phase = 'complete';
-				this.broadcastAll({ type: 'complete' });
-				this.broadcastState();
+				this.completeGame(false);
 			} else {
 				this.roundTimer = setTimeout(() => {
 					this.roundTimer = null;
@@ -227,7 +389,7 @@ export class Room {
 			this.schedulePlayerRemoval(playerId);
 		}
 		if (this.wsMap.size === 0) {
-			this.scheduleRoomReset();
+			if (this.state.phase !== 'complete') this.scheduleRoomReset();
 			return;
 		}
 		this.broadcastState();
@@ -245,6 +407,7 @@ export class Room {
 					isCorrupt: inbox.isCorrupt
 				} satisfies Fragment
 			});
+			this.scheduleOrSendChoices(playerId, inbox);
 		}
 	}
 
@@ -262,15 +425,22 @@ export class Room {
 			totalFragments: 0,
 			revealMs: CONFIG.reveal_ms,
 			questionType: null,
-			prompt: null
+			prompt: null,
+			startedAt: null,
+			completedAt: null,
+			forcedComplete: false
 		};
 	}
 
 	private startGame(): void {
+		this.cancelRoomReset();
 		const q1 = shuffle([...Q1_POOL])[0];
 		const q2 = shuffle([...Q2_POOL])[0];
 		this.questions = [q1, q2];
 		this.state.gameRound = 0;
+		this.state.startedAt = Date.now();
+		this.state.completedAt = null;
+		this.state.forcedComplete = false;
 		this.startGameRound();
 	}
 
@@ -295,6 +465,7 @@ export class Room {
 		this.state.round = 0;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
 		this.submitCooldown.clear();
+		this.choiceCooldown.clear();
 		this.distributeFragments();
 	}
 
@@ -315,6 +486,7 @@ export class Room {
 		this.state.prompt = null;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
 		this.submitCooldown.clear();
+		this.choiceCooldown.clear();
 		this.broadcastAll({ type: 'toast', text: '全員同意，重新開始本題 ↻', kind: 'info' });
 		this.distributeFragments();
 	}
@@ -332,21 +504,31 @@ export class Room {
 			p.isArmed = false;
 		});
 		this.clearDisarmTimers();
+		this.clearChoiceTimers();
 		this.armTime.clear();
 
 		const unfilled = shuffle(this.internalFrags.filter((f) => !filledSlots.has(f.slot)));
+		const now = Date.now();
 
 		this.state.players.forEach((player, i) => {
 			const frag = unfilled[i % unfilled.length];
 			const isCorrupt =
 				(CONFIG.guarantee_first_corrupt && this.state.round === 1 && i === 0) ||
 				Math.random() < CONFIG.corruption_chance;
+			const generated = isCorrupt
+				? { choices: [], correctChoiceId: null }
+				: buildChoices(frag.cleanContent, this.internalFrags);
 
 			this.playerInboxes.set(player.id, {
 				fragId: frag.id,
 				content: isCorrupt ? corrupt(frag.cleanContent) : frag.cleanContent,
 				isCorrupt,
-				slot: frag.slot
+				slot: frag.slot,
+				cleanContent: frag.cleanContent,
+				choices: generated.choices,
+				correctChoiceId: generated.correctChoiceId,
+				deliveredAt: now,
+				choiceSent: false
 			});
 		});
 
@@ -361,6 +543,7 @@ export class Room {
 					isCorrupt: inbox.isCorrupt
 				} satisfies Fragment
 			});
+			this.scheduleOrSendChoices(p.id, inbox);
 		});
 	}
 
@@ -390,6 +573,7 @@ export class Room {
 	}
 
 	private enterAnswer(): void {
+		this.clearChoiceTimers();
 		this.state.phase = 'answer';
 		this.state.prompt = this.currentMessage?.prompt ?? null;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
@@ -407,6 +591,35 @@ export class Room {
 		this.disarmTimers.clear();
 	}
 
+	private clearChoiceTimers(): void {
+		this.choiceTimers.forEach((t) => clearTimeout(t));
+		this.choiceTimers.clear();
+	}
+
+	private scheduleOrSendChoices(playerId: string, inbox: PlayerInbox): void {
+		if (inbox.isCorrupt || inbox.choiceSent || this.state.phase !== 'inspect') return;
+		const remaining = Math.max(0, CONFIG.reveal_ms - (Date.now() - inbox.deliveredAt));
+		if (remaining === 0) {
+			this.sendChoiceSet(playerId, inbox.fragId);
+			return;
+		}
+		const existing = this.choiceTimers.get(playerId);
+		if (existing) clearTimeout(existing);
+		const timer = setTimeout(() => {
+			this.choiceTimers.delete(playerId);
+			this.sendChoiceSet(playerId, inbox.fragId);
+		}, remaining);
+		this.choiceTimers.set(playerId, timer);
+	}
+
+	private sendChoiceSet(playerId: string, fragId: string): void {
+		const inbox = this.playerInboxes.get(playerId);
+		if (!inbox || inbox.fragId !== fragId || inbox.isCorrupt || this.state.phase !== 'inspect')
+			return;
+		inbox.choiceSent = true;
+		this.send(playerId, { type: 'choice_set', fragId: inbox.fragId, choices: inbox.choices });
+	}
+
 	private schedulePlayerRemoval(playerId: string): void {
 		this.cancelPlayerRemoval(playerId);
 		const timer = setTimeout(() => {
@@ -415,7 +628,11 @@ export class Room {
 			this.state.players = this.state.players.filter((p) => p.id !== playerId);
 			this.playerInboxes.delete(playerId);
 			this.submitCooldown.delete(playerId);
-			if (!this.maybeStartGame()) this.broadcastState();
+			this.choiceCooldown.delete(playerId);
+			const choiceTimer = this.choiceTimers.get(playerId);
+			if (choiceTimer) clearTimeout(choiceTimer);
+			this.choiceTimers.delete(playerId);
+			this.broadcastState();
 		}, CONFIG.reconnect_grace_ms);
 		this.playerRemovalTimers.set(playerId, timer);
 	}
@@ -454,8 +671,10 @@ export class Room {
 		this.internalFrags = [];
 		this.playerInboxes.clear();
 		this.submitCooldown.clear();
+		this.choiceCooldown.clear();
 		this.armTime.clear();
 		this.clearDisarmTimers();
+		this.clearChoiceTimers();
 		this.clearPlayerRemovalTimers();
 		if (this.redistTimer) {
 			clearTimeout(this.redistTimer);
@@ -465,18 +684,49 @@ export class Room {
 			clearTimeout(this.roundTimer);
 			this.roundTimer = null;
 		}
+		this.onStateChange();
 	}
 
-	private maybeStartGame(): boolean {
-		if (this.state.phase !== 'lobby') return false;
-		if (
-			this.state.players.length > 0 &&
-			this.state.players.every((p) => p.isConnected && p.isReady)
-		) {
-			this.startGame();
-			return true;
+	getAdminState(): AdminRoomState {
+		return {
+			roomId: this.state.roomId,
+			phase: this.state.phase,
+			round: this.state.round,
+			gameRound: this.state.gameRound,
+			maxRounds: this.state.maxRounds,
+			players: this.state.players,
+			bufferFilled: this.filledCount(),
+			totalFragments: this.state.totalFragments,
+			questionType: this.state.questionType,
+			prompt: this.state.prompt,
+			startedAt: this.state.startedAt,
+			completedAt: this.state.completedAt,
+			forcedComplete: this.state.forcedComplete
+		};
+	}
+
+	private completeGame(forcedComplete: boolean): void {
+		if (this.redistTimer) {
+			clearTimeout(this.redistTimer);
+			this.redistTimer = null;
 		}
-		return false;
+		if (this.roundTimer) {
+			clearTimeout(this.roundTimer);
+			this.roundTimer = null;
+		}
+		this.clearDisarmTimers();
+		this.clearChoiceTimers();
+		this.armTime.clear();
+		this.state.players.forEach((p) => {
+			p.isArmed = false;
+			p.wantsRestart = false;
+		});
+		this.state.phase = 'complete';
+		this.state.startedAt ??= Date.now();
+		this.state.completedAt ??= Date.now();
+		this.state.forcedComplete = forcedComplete;
+		this.broadcastAll({ type: 'complete' });
+		this.broadcastState();
 	}
 
 	private nextPlayerName(): string {
@@ -505,5 +755,6 @@ export class Room {
 
 	private broadcastState(): void {
 		this.broadcastAll({ type: 'state', room: this.state });
+		this.onStateChange();
 	}
 }
