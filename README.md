@@ -1,91 +1,133 @@
-# 封包掉包遊戲 · Packet Drop
+# SITCON Camp 2026 封包遊戲
 
-**Languages:** English · [繁體中文](README.zh-TW.md)
+# ACK! — A Co-op Packet Reassembly Game
 
-> **TL;DR** — A team of 6 players *becomes* one TCP connection. The game chops a puzzle into 6 numbered packets, scatters them across the players' phones in random order, and lets a facilitator "corrupt" some of them. To win, the team must **reassemble the packets in order** and **recover from packet loss together** — feeling, by hand, exactly how TCP delivers data reliably over an unreliable network.
-
-Built for **SITCON Camp 2026**. Players just open a URL on their phone — no install. Up to 6 teams play in parallel.
+> A real-time cooperative game for **N players**. The system ships fragments of a question over a _lossy channel_; each fragment **flashes briefly then vanishes**, so the team must transcribe what they saw from memory, retransmit anything that arrived as garbage, and collectively answer.
+>
+> Under the hood this is a hands-on simulation of **segmentation, bit-errors, ARQ retransmission, out-of-order delivery, and reassembly buffers** — with a human memory buffer standing in for the receive buffer.
 
 ---
 
-## 🕹️ The core workflow (read this first)
+## 1. TL;DR
 
-> **TL;DR** — Every round: each player receives **1 of 6 puzzle fragments** → taps **Import** to drop it into the team's shared notes → the team **drag-sorts** the scrambled fragments back into order `01→06` → reads the reassembled puzzle → submits **one team answer**. Do this 3 times (3 puzzles). A packet-loss event can interrupt at any time (see below).
+The game has **exactly two questions**:
+
+1. **Q1 — Sentence (memory):** `請問你參加的夏令營的主辦單位英文縮寫是什麼？` is split into `N` fragments, one per player. Each fragment is shown for **15 s** (`.env` configurable) and then disappears. Players type what they saw into a shared **notes** buffer. Answer: `SITCON`.
+2. **Q2 — Logic clues:** the round-table logic puzzle clues are flashed the same way. Players transcribe the clues into shared notes, then answer `CC 的右手邊是誰？`. Answer: `Tang`.
+
+For both questions the loop is identical:
+
+1. A fragment **flashes** for `REVEAL_MS` then vanishes.
+2. If it arrived as **garbage** (`"▓░█▒"`) you can't read it → all `N` players press **ACK together** to trigger a **retransmit** (reshuffle + re-roll corruption).
+3. Clean fragment → you **type it into the shared notes** (`input`). Notes are a free-text scratchpad — the server **never validates their content**.
+4. Once every slot has a note, the team moves to **answer**: read the collected notes, type the final answer, submit.
+5. If the notes are too gappy, **everyone votes "重新開始"** to re-flash the current question.
+
+The fun lives in three places: the **15 s memory pressure**, the **synchronized ACK** (everyone presses together to resend a corrupt fragment), and the **collective transcription** under a lossy channel.
 
 ### What's actually happening
 
-A puzzle is one "message" that is too big to send in a single packet. The server **splits it into 6 fragments**, each tagged with a sequence number (`封包 01/06` … `封包 06/06`), and **scatters one fragment to each of the 6 seats in random order**. No single player can see the whole puzzle — they must pool and reorder their fragments to rebuild it.
+## 2. The metaphor
 
-```
-              SERVER  ── holds one 6-piece puzzle for this round
-                 │
-                 │  splits into 6 numbered fragments,
-                 │  scatters ONE to each seat at random
-                 ▼
-   ┌────────┬────────┬────────┬────────┬────────┬────────┐
-  Seat 1   Seat 2   Seat 3   Seat 4   Seat 5   Seat 6
-  封包03   封包01   封包05   封包02   封包06   封包04      ← each phone sees only ITS fragment
-   │        │        │        │        │        │
-   └────────┴──── every player taps "Import" ───┴────────┘
-                 │
-                 ▼
-        SHARED NOTES  ── fragments arrive SCRAMBLED (import order ≠ sequence order)
-        03 · 01 · 05 · 02 · 06 · 04
-                 │
-                 │  the team DRAG-SORTS by sequence number
-                 ▼
-        01 · 02 · 03 · 04 · 05 · 06   ── message is now readable: intro → clues → question
-                 │
-                 ▼
-        team SOLVES the puzzle together  →  submits ONE team answer  →  next round
-```
+Every mechanic maps to a real networking concept.
 
-### Step by step (one round)
+| Game element                                 | Real networking concept                              |
+| -------------------------------------------- | ---------------------------------------------------- |
+| The question (sentence / clue set)           | Application-layer payload                            |
+| Splitting it into `N` fragments              | Segmentation / IP fragmentation                      |
+| Each player = one receiver slot              | A per-flow receive buffer slot                       |
+| Fragment **flashes then vanishes** (15 s)    | A packet you must process before the buffer ages out |
+| Garbage fragment `"▓░█▒"`                    | Bit errors / failed checksum (CRC mismatch)          |
+| Pressing **ACK** to force a resend           | Retransmission request (ARQ)                         |
+| All `N` must ACK **together**                | Synchronized / barrier-style retransmit              |
+| Reshuffled delivery each round               | Out-of-order delivery                                |
+| Shared **notes** that collect transcriptions | Reassembly buffer (human-side)                       |
+| Typing the final answer                      | Delivering the reassembled payload up to the app     |
 
-| # | Step | Who | What happens on screen |
-|---|------|-----|------------------------|
-| 0 | **Distribute** | Server | When the round starts, the server hands each seat one fragment. Seat→fragment mapping is random *but stable* (a seeded shuffle), so it never reshuffles mid-round. |
-| 1 | **Receive** | Each player | Your phone's **"My Packet"** card shows your one fragment, e.g. `【封包 03/06】線索二：袋子 B 是綠色`. You can't see anyone else's. |
-| 2 | **Import** | Each player | Tap **Import to Shared Notes**. Your fragment is written into the team's shared note — now everyone on the team can see it. |
-| 3 | **Reorder** | Whole team | As fragments are imported they appear in the shared notes in *import* order, i.e. scrambled. The team **drag-sorts** them into `01→06` using the `封包 NN/06` labels. The notes sync every 2s, so everyone sees the same order. |
-| 4 | **Solve** | Whole team | Once ordered, the fragments read as a coherent message (intro → 4 clues → question). The team solves the logic puzzle and submits **one** answer for the whole team. |
-| 5 | **Advance** | Facilitator | Facilitator clicks **Next** → the server loads the next puzzle and the loop repeats. After round 3, the team sees a completion screen. |
-
-### Worked example — Round 1 「神秘顏色」
-
-The puzzle: four bags A/B/C/D each hold a ball of a different color (red/blue/yellow/green). The 6 fragments are:
-
-| Sequence | Fragment content |
-|----------|------------------|
-| `封包 01/06` | Intro: 4 bags, 4 colors, one each |
-| `封包 02/06` | Clue 1: bag A is *not* red, *not* blue |
-| `封包 03/06` | Clue 2: bag B *is* green |
-| `封包 04/06` | Clue 3: bag C is *not* yellow |
-| `封包 05/06` | Clue 4: bag D is *not* green, *not* yellow |
-| `封包 06/06` | The question + answer format |
-
-Each player gets one of these in random order. Only after the team imports all 6 and sorts them `01→06` does the chain of clues make sense — then they deduce **A=黃, B=綠, C=紅, D=藍** and submit it.
+> **Protocol-accuracy note:** the button players press to _request a resend_ is functionally a **collective NAK / RESEND**. The label `ACK` is kept for flavour; rename to `NAK`/`RESEND` if you want it protocol-accurate.
 
 ---
 
-## ⚠️ The packet-loss event (the climax mechanic)
+## 3. Players, channel, and shared space
 
-> **TL;DR** — The facilitator can "drop" packets on a team mid-round. Random fragments turn into garbage characters and the puzzle becomes unreadable. A red banner appears for **everyone**, and **every single player must tap ACK** before the data retransmits and the corruption clears. One person not ACKing blocks the whole team.
-
-What happens, in order:
-
-1. **Trigger.** The facilitator clicks **Loss** on a team. The server marks a random **50–80% of seats** as "affected."
-2. **Corruption appears.** On the next 2s sync, the affected fragments — both in the player's "My Packet" card *and* in the shared notes — turn into noise like `█▓▒░乱?#`. The clues are now unreadable, so the puzzle can't be solved.
-3. **Everyone must ACK.** A red banner pops up **for the whole team** (not just affected players), showing live progress like `3/6 acknowledged`. It is **unanimous** — every joined player must press **ACK**.
-4. **Retransmit.** When the *last* player ACKs, the server resolves the event. On the next sync the corruption clears and the clean fragments come back.
-
-This is the emotional core: the team feels that **a connection stalls until everyone acknowledges**, and that recovery is a *group* responsibility, not just the affected players'.
+- **Players** — `N` symmetric receivers. No special roles. The game starts when every connected player in the lobby is ready.
+- **Channel / Server** — authoritative. Owns the question, fragmentation, the corruption RNG, the ACK barrier, and answer verification. Players only send _intents_; the server owns _truth_.
+- **Shared space** — synced live to everyone:
+  1. **Inbox** — the single fragment _you_ received this round. **Visible for `REVEAL_MS` only**, then it vanishes.
+  2. **Notes (buffer)** — the shared collection of transcribed fragments (`x / N` slots filled). Free text, never validated, persists across retransmits.
 
 ---
 
-## 🎯 What players learn
+## 4. Core game loop
 
-> **TL;DR** — Four TCP ideas, felt rather than memorized: data is **fragmented**, packets arrive **out of order**, packets can be **lost/corrupted**, and recovery needs **acknowledgement (ACK)**. The hidden lesson: *reliability costs coordination.*
+```
+LOBBY ─► all ready ─► QUESTION 1 (sentence) ─► … ─► QUESTION 2 (clues) ─► COMPLETE
+
+per QUESTION:
+   pick payload ─► split into F1..FN
+   │
+   ▼
+ROUND ─► shuffle fragments ─► roll corruption per fragment ─► deliver 1 per player
+   │
+   ▼
+FLASH ─► each fragment visible REVEAL_MS, then vanishes
+   │
+   ├─ clean ─► player TYPES it into shared notes (input) ─┐
+   │                                                       │
+   └─ garbage ─► can't read ─► ACK BARRIER (all N arm) ─► RETRANSMIT ─► ROUND
+                                                           │
+   ◄───────────────────────────────────────────────────  ┘
+   all N notes filled ─► ANSWER ─► type answer ─► submit
+                              │
+                              ├─ correct ─► next question / COMPLETE
+                              ├─ wrong ─► cooldown, stay in ANSWER
+                              └─ all vote 重新開始 ─► reset this question ─► ROUND
+```
+
+---
+
+## 5. Mechanics in detail
+
+### 5.1 The two question pools
+
+- **Q1 (`Q1_POOL`, `type: "sentence"`):** a sentence is split **evenly by character count** into `N` contiguous fragments. The reassembled sentence _is_ the question; the team answers `SITCON`.
+- **Q2 (`Q2_POOL`, `type: "clues"`):** a round-table logic puzzle. Each **clue string is one fragment**. The answer is the person immediately to CC's right, `Tang`. The number of clues need not equal `N` — extra clues are delivered across retransmit rounds; fewer clues just means some players share one.
+
+### 5.2 The flash (ephemeral delivery)
+
+- When a fragment is delivered it is shown with a **countdown for `REVEAL_MS`** (default **15 000 ms**, env-controlled).
+- After the window the fragment text is **masked** (`封包已消失，請憑記憶輸入`). The transcription `input` stays open.
+- The flash is purely client-side timing; the server delivers the fragment once and the client runs the countdown.
+
+### 5.3 Corruption model
+
+- Each round every fragment is delivered (one per player), each independently corrupted with probability `CORRUPTION_CHANCE` (default `0.4`) — replaced by obvious garbage (`"▓░█▒■□"`).
+- A corrupt fragment **cannot be transcribed** (the input is disabled); the only path forward is to **ACK for a retransmit**.
+- `GUARANTEE_CORRUPT=true` forces ≥1 corruption in round 1 so the ACK mechanic always gets exercised.
+
+### 5.4 The shared notes (reassembly buffer)
+
+- `N` slots, one per fragment `slot`. Persists across retransmits and fills monotonically.
+- A player transcribes their _current_ fragment via the **記錄** action (`input` → `log_fragment`).
+  - **Clean** ⇒ server stores the **typed text** into the matching slot. **Content is never checked against the truth** — it's a collaborative note (`充當 note`).
+  - **Garbage** ⇒ server rejects (`封包損毀，無法記錄`). The buffer can never be filled from an unreadable fragment.
+- Across enough retransmits every slot eventually arrives clean to _someone_ and gets transcribed. When all `N` slots hold a note ⇒ **answer phase**.
+
+### 5.5 The ACK barrier (simultaneous press)
+
+To trigger a retransmit, **all `N` players must be armed at the same instant**.
+
+- Pressing **ACK** _arms_ you for `T_ack`, then auto-disarms.
+- If at any instant **all `N` are armed simultaneously**, the barrier **fires** ⇒ retransmit (reshuffle unfilled slots + re-roll corruption).
+- There is no auto-arm bypass; all connected players must coordinate the ACK barrier.
+
+### 5.6 Answer & restart
+
+- **Answer phase** shows the question `prompt` and the collected notes (joined for sentence, listed for clues). The true payload is **not** re-shown — you answer from your notes.
+- **Submit** ⇒ server compares `normalize(answer)` (trim, collapse whitespace, uppercase).
+  - Correct ⇒ advance to the next question, or **COMPLETE** after Q2.
+  - Wrong ⇒ short cooldown (`WRONG_PENALTY`), stay in answer.
+- **重新開始 (restart):** any player can vote; when **all `N` players have voted**, the **current question** resets — notes cleared, fresh fragments re-flashed. Use it when the notes are too incomplete to answer.
 
 | TCP concept | The matching game mechanic |
 |-------------|----------------------------|
@@ -94,50 +136,125 @@ This is the emotional core: the team feels that **a connection stalls until ever
 | **Packet loss & corruption** | The facilitator drops packets; affected fragments become unreadable garbage. |
 | **ACK & retransmission** | Recovery requires **every** player to ACK before the data re-sends — TCP's "no progress without acknowledgement," made unanimous and physical. |
 
-**Why the analogy holds:**
+## 6. Win / lose
 
-- **Sequence numbers** = the `封包 NN/06` labels. Reordering only works *because* each fragment is numbered — just like TCP byte sequence numbers.
-- **Random delivery** = the network gives no ordering guarantee; restoring order is the receiver's job.
-- **Shared notes** = the **receive buffer** where segments collect before being delivered in order to the "application" (the team's brain).
-- **Unanimous ACK** = a deliberately strict version of acknowledgement so the coordination cost is *felt*. Real ACKs are per-segment, but the principle — no progress without an ACK — is identical.
-- **Deterministic corruption** = corruption is computed from a fixed seed, so a dropped packet stays *stably* broken (no flicker) until retransmitted.
+- **Win:** answer both questions correctly.
+- **No hard lose** — co-op; the notes only fill and the team can always retransmit or restart. Difficulty comes from the 15 s memory pressure, coordination on the ACK barrier, and the Q2 deduction.
 
 ---
 
-## 🚀 Running it
+## 7. Tunable parameters (`.env`)
 
-> **TL;DR** — `pnpm install` → `npx prisma migrate dev` → `pnpm dev`, then players open `/` and the facilitator opens `/admin`.
+| Env var              | Meaning                                          | Default |
+| -------------------- | ------------------------------------------------ | ------- |
+| `WS_PORT`            | Bun WebSocket port                               | `8080`  |
+| `REVEAL_MS`          | How long a fragment stays visible (flash window) | `15000` |
+| `RECONNECT_GRACE_MS` | ms to preserve a player slot after refresh       | `5000`  |
+| `T_ACK`              | ms a player stays armed (all must overlap)       | `3000`  |
+| `CORRUPTION_CHANCE`  | Per-fragment corruption probability `0.0–1.0`    | `0.4`   |
+| `GUARANTEE_CORRUPT`  | Force ≥1 corruption in round 1                   | `true`  |
+| `WRONG_PENALTY`      | ms cooldown after a wrong answer                 | `3000`  |
 
-```bash
-pnpm install
-npx prisma migrate dev --name init   # create the SQLite DB
-pnpm dev                             # http://localhost:3000
+> Questions per game is fixed at **2** (`MAX_ROUNDS` in `src/lib/config.ts`).
+
+---
+
+## 8. Edge cases & rulings
+
+| Situation                                | Ruling                                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| A player is AFK ⇒ barrier can never fire | The room waits; coordinate before starting or reconnect/reset the room.                         |
+| Player's fragment is corrupt             | Transcription input disabled; they ACK for a retransmit. No buffer pollution.                   |
+| Player mistypes their note               | Allowed — notes are never validated. Verification is only the final answer.                     |
+| Notes too gappy to answer                | All players vote **重新開始** to re-flash the current question.                                 |
+| Browser refresh / quick reconnect        | The player slot is preserved for `RECONNECT_GRACE_MS`, so the same tab keeps its player number. |
+| Mid-round disconnect                     | On reconnect within the grace window, resync from server state (notes + current inbox).         |
+| Clue count ≠ player count (Q2)           | Extra clues spread across retransmit rounds; fewer clues → some players share.                  |
+
+---
+
+## 9. Diagrams
+
+### 9.1 Main game flow
+
+```mermaid
+flowchart TD
+    A([Lobby: N players ready]) --> B[Question k: pick payload]
+    B --> C[Split into F1..FN]
+    C --> D[Round: shuffle + roll corruption]
+    D --> E[Deliver one fragment per player]
+    E --> F[FLASH for REVEAL_MS then vanish]
+    F --> G{Clean / readable?}
+    G -- Yes --> H[Type fragment into shared notes]
+    G -- No, garbage --> I[ACK barrier: all N arm together]
+    I --> J{All N armed at once?}
+    J -- No, window expired --> I
+    J -- Yes --> K[Retransmit: reshuffle + re-roll]
+    K --> D
+    H --> L{All N notes filled?}
+    L -- No --> D
+    L -- Yes --> M[ANSWER: read notes, type answer]
+    M --> N{Correct?}
+    N -- No --> M
+    N -- All vote restart --> B
+    N -- Yes --> O{More questions?}
+    O -- Yes --> B
+    O -- No --> P([COMPLETE])
 ```
 
-| Route | Who | Purpose |
-|-------|-----|---------|
-| `/` | Players | Enter group number → auto-assigned seat → waiting lobby → start |
-| `/game/[teamNumber]?slot=N` | Players | Gameplay: your packet, the shared notes, the answer box, the ACK banner |
-| `/admin` | Facilitator | Start games, trigger packet loss, advance rounds, reset a team or all teams |
+### 9.2 Session state machine
 
-### Facilitator playbook
-1. Project `/admin` on the screen.
-2. Each table picks a group number; players join on their phones (seats auto-assign).
-3. Hit **Start** for a team once everyone's in.
-4. Let them **import → reorder → solve** round 1.
-5. **Trigger a packet loss** mid-round to teach the ACK mechanic — watch them realize they *all* have to press ACK.
-6. **Next** to advance rounds. **Reset** (or **Reset All**) between sessions.
-
----
-
-## 🛠️ For developers
-
-> **TL;DR** — Next.js 14 + Prisma 5 + SQLite. State syncs by 2s polling (no WebSockets). Fragment assignment and corruption are both deterministic (seeded), so nothing about who-gets-what needs to be stored. Full architecture is in [`CLAUDE.md`](CLAUDE.md).
-
-- **No WebSockets** — clients poll every 2s with a skip-if-unchanged guard, so re-renders (and drag-sort DOM remeasures) only happen when the data actually changes.
-- **Stateless fragment assignment** — which seat gets which fragment is derived from a seeded shuffle of `(teamNumber, round, slot)`, so it's reproducible without storing it.
-- See [`CLAUDE.md`](CLAUDE.md) for the architecture, file map, API list, and database schema.
+```mermaid
+stateDiagram-v2
+    [*] --> Lobby
+    Lobby --> Inspect: all N ready
+    Inspect --> Inspect: ACK barrier fires, retransmit
+    Inspect --> Answer: all N notes filled
+    Answer --> Answer: wrong answer (cooldown)
+    Answer --> Inspect: all vote 重新開始
+    Answer --> Inspect: correct, next question
+    Answer --> Complete: correct, last question
+    Complete --> [*]
+```
 
 ---
 
-*Puzzle content is in Traditional Chinese (繁體中文); UI labels are bilingual. A Chinese version of this document is at [README.zh-TW.md](README.zh-TW.md).*
+## 10. Architecture
+
+Server-authoritative state + a thin reactive client.
+
+**Realtime / server** (`game/`)
+
+- `Bun.serve` with native WebSocket; one `Room` per `roomId` (`game/server.ts`, `game/room.ts`).
+- Server holds the only source of truth: the two questions, fragments, corruption RNG, ACK arm-flags, the notes buffer, phase.
+- Clients send _intents_ (`ready`, `log_fragment`, `arm_ack`, `submit_answer`, `vote_restart`, `resync`); the server validates and broadcasts the room snapshot.
+
+**Shared state shape (TS)** — see `src/lib/types.ts`:
+
+```ts
+type Phase = 'lobby' | 'inspect' | 'answer' | 'complete';
+
+interface RoomState {
+	roomId: string;
+	phase: Phase;
+	round: number; // retransmit round within current question
+	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
+	maxRounds: number; // always 2
+	players: Player[];
+	buffer: (string | null)[]; // shared notes by slot; null = not yet transcribed
+	totalFragments: number;
+	revealMs: number; // flash window
+	questionType: 'sentence' | 'clues' | null;
+	prompt: string | null; // answer-phase question text
+}
+```
+
+**Client (Svelte 5)** — `src/routes/game/[roomId]/+page.svelte`
+
+- Holds `RoomState` in a `$state` rune; patches it from each WS broadcast.
+- Runs the `REVEAL_MS` flash countdown client-side; masks the fragment when it expires.
+- `$derived` for computed UI (`filledCount`, `armedCount`, `restartCount`, joined notes).
+- `$effect` only for the WS subscription lifecycle.
+- No client-side trust: notes storage, corruption, and answer verification all come from the server.
+
+**Config** — message pools + tunables live in `src/lib/config.ts` + `.env`; no DB.
