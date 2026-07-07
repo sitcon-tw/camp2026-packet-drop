@@ -25,7 +25,7 @@ For both questions the loop is identical:
 
 The fun lives in three places: the **15 s memory pressure**, the **synchronized ACK** (everyone presses together to resend a corrupt fragment), and the **collective transcription** under a lossy channel.
 
----
+### What's actually happening
 
 ## 2. The metaphor
 
@@ -129,7 +129,12 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
   - Wrong ⇒ short cooldown (`WRONG_PENALTY`), stay in answer.
 - **重新開始 (restart):** any player can vote; when **all `N` players have voted**, the **current question** resets — notes cleared, fresh fragments re-flashed. Use it when the notes are too incomplete to answer.
 
----
+| TCP concept | The matching game mechanic |
+|-------------|----------------------------|
+| **Fragmentation** | The puzzle is too big for one packet, so it's split into 6. No one can solve it alone. |
+| **Out-of-order delivery** | Fragments arrive at random seats; the shared notes start scrambled and must be **reordered by sequence number** — exactly a TCP receiver's job. |
+| **Packet loss & corruption** | The facilitator drops packets; affected fragments become unreadable garbage. |
+| **ACK & retransmission** | Recovery requires **every** player to ACK before the data re-sends — TCP's "no progress without acknowledgement," made unanimous and physical. |
 
 ## 6. Win / lose
 
