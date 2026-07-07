@@ -52,7 +52,7 @@ Every mechanic maps to a real networking concept.
 ## 3. Players, channel, and shared space
 
 - **Players** — `N` symmetric receivers. No special roles. The game starts when an admin starts the room from `/admin`.
-- **Admin** — enters `/admin`, authenticates with `ADMIN_TOKEN`, selects two rooms, monitors progress, starts rooms, and can force a room to complete.
+- **Admin** — enters `/admin`, authenticates with `ADMIN_TOKEN`, selects two rooms, monitors progress, starts rooms, can force a room to complete, and can delete a completed room's record from the ranking.
 - **Channel / Server** — authoritative. Owns the question, fragmentation, the corruption RNG, the ACK barrier, and answer verification. Players only send _intents_; the server owns _truth_.
 - **Shared space** — synced live to everyone:
   1. **Inbox** — the single fragment _you_ received this round. **Visible for `REVEAL_MS` only**, then it vanishes.
@@ -234,7 +234,7 @@ Server-authoritative state + a thin reactive client.
 - `Bun.serve` with native WebSocket; one `Room` per `roomId` (`game/server.ts`, `game/room.ts`).
 - Server holds the only source of truth: the two questions, fragments, corruption RNG, ACK arm-flags, the notes buffer, phase.
 - Clients send _intents_ (`select_fragment_choice`, `arm_ack`, `submit_answer`, `vote_restart`, `resync`); the server validates and broadcasts the room snapshot.
-- Admin clients connect to `/ws/admin?token=...`, subscribe to two room IDs, and send `admin_start` / `admin_force_complete` controls.
+- Admin clients connect to `/ws/admin?token=...`, subscribe to two room IDs, and send `admin_start`, `admin_force_complete`, or `admin_clear_record` controls.
 
 **Shared state shape (TS)** — see `src/lib/types.ts`:
 

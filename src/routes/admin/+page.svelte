@@ -116,6 +116,11 @@
 		wsRef?.send(JSON.stringify({ type: 'admin_force_complete', roomId }));
 	}
 
+	function clearRecord(roomId: string) {
+		errorText = '';
+		wsRef?.send(JSON.stringify({ type: 'admin_clear_record', roomId }));
+	}
+
 	function formatTime(value: number | null) {
 		if (!value) return '-';
 		return new Intl.DateTimeFormat('zh-TW', {
@@ -251,6 +256,14 @@
 					>
 						強制結束
 					</button>
+					<button
+						class="btn ghost"
+						type="button"
+						onclick={() => clearRecord(room.roomId)}
+						disabled={!connected || room.phase !== 'complete'}
+					>
+						刪除紀錄
+					</button>
 				</div>
 
 				<ul class="player-list">
@@ -379,6 +392,10 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+
+	.actions {
+		flex-wrap: wrap;
 	}
 
 	.auth-panel {
@@ -585,6 +602,12 @@
 	.btn.danger {
 		border-color: rgba(255, 105, 97, 0.55);
 		color: #ff6961;
+	}
+
+	.btn.ghost {
+		border-color: rgba(255, 191, 87, 0.48);
+		color: #ffbf57;
+		background: #081312;
 	}
 
 	.player-list,

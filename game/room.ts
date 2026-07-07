@@ -256,6 +256,23 @@ export class Room {
 		this.completeGame(true);
 	}
 
+	clearRecordByAdmin(): { ok: true } | { ok: false; message: string } {
+		if (this.state.phase !== 'complete') {
+			return { ok: false, message: '只有完成後的隊伍可以刪除紀錄' };
+		}
+		const players = this.state.players.map((p) => ({
+			...p,
+			isConnected: this.wsMap.has(p.id),
+			hasLogged: false,
+			isArmed: false,
+			wantsRestart: false
+		}));
+		this.resetRoom();
+		this.state.players = players;
+		this.broadcastState();
+		return { ok: true };
+	}
+
 	logFragment(playerId: string, text: string): void {
 		void text;
 		this.send(playerId, { type: 'error', message: '請使用選項寫入共享筆記' });

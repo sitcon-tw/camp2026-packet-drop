@@ -75,7 +75,8 @@ export interface AdminRankingEntry {
 export type AdminClientMsg =
 	| { type: 'admin_subscribe'; roomIds: string[] }
 	| { type: 'admin_start'; roomId: string }
-	| { type: 'admin_force_complete'; roomId: string };
+	| { type: 'admin_force_complete'; roomId: string }
+	| { type: 'admin_clear_record'; roomId: string };
 
 export type ServerMsg =
 	| { type: 'welcome'; playerId: string }

@@ -127,6 +127,16 @@ const server = Bun.serve<WsData>({
 						getRoom(roomId).forceCompleteByAdmin();
 						break;
 					}
+					case 'admin_clear_record': {
+						const roomId = String(msg.roomId ?? '').trim();
+						if (!roomId) break;
+						const result = getRoom(roomId).clearRecordByAdmin();
+						if (!result.ok) {
+							ws.send(JSON.stringify({ type: 'admin_error', message: result.message }));
+							sendAdminState(ws as never);
+						}
+						break;
+					}
 				}
 				return;
 			}
