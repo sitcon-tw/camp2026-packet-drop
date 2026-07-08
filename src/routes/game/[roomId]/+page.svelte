@@ -22,6 +22,7 @@
 	let choiceFragId = $state('');
 	let selectedChoiceId = $state('');
 	let choiceExpired = $state(false);
+	let kicked = $state(false);
 
 	// Flash / reveal countdown
 	let revealLeft = $state(0);
@@ -32,6 +33,8 @@
 
 	// ── derived ──────────────────────────────────────────────────
 	const me = $derived(room?.players.find((p) => p.id === playerId));
+	const isHost = $derived(room?.hostId === playerId);
+	const onlineCount = $derived(room?.players.filter((p) => p.isConnected).length ?? 0);
 	const submitCooldownEnd = $derived(Math.max(submitCooldownUntil, room?.answerCooldownUntil ?? 0));
 	const cooldownActive = $derived(submitCooldownEnd > now);
 	const cooldownRemaining = $derived(Math.max(0, Math.ceil((submitCooldownEnd - now) / 1000)));
@@ -100,6 +103,12 @@
 					break;
 				case 'state':
 					room = msg.room as RoomState;
+					break;
+				case 'kicked':
+					kicked = true;
+					sessionStorage.removeItem(`pid:${roomId}`);
+					addToast('你已被房主移出房間', 'error');
+					socket.close();
 					break;
 				case 'inbox':
 					inbox = msg.fragment as Fragment;
@@ -236,6 +245,12 @@
 		if (me?.wantsRestart) return;
 		send({ type: 'vote_restart' });
 	}
+	function kickPlayer(targetId: string) {
+		const target = room?.players.find((p) => p.id === targetId);
+		if (!isHost || !target || target.id === playerId) return;
+		if (!confirm(`要將 ${target.name} 移出房間嗎？`)) return;
+		send({ type: 'kick_player', playerId: target.id });
+	}
 	function onAnswerKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') submitAnswer();
 	}
@@ -251,7 +266,13 @@
 		<div class="link-state" class:online={wsReady}>{wsReady ? phaseTitle : 'CONNECTING'}</div>
 	</header>
 
-	{#if !wsReady}
+	{#if kicked}
+		<section class="panel status-panel">
+			<h2>已被移出房間</h2>
+			<p class="muted">請向房主確認後再重新加入</p>
+			<a href={resolve('/')} class="btn primary wide">回首頁</a>
+		</section>
+	{:else if !wsReady}
 		<section class="panel status-panel">
 			<div class="pulse-grid" aria-hidden="true">
 				{#each packetSlots as slot (slot)}
@@ -279,7 +300,7 @@
 					<h2>等待玩家加入</h2>
 				</div>
 				<div class="mini-stat">
-					<strong>{room.players.length}</strong>
+					<strong>{onlineCount}</strong>
 					<span>online</span>
 				</div>
 			</div>
@@ -295,11 +316,15 @@
 					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
 						<span class="dot" class:on={p.isConnected} class:offline={!p.isConnected}></span>
 						<span>{p.name}</span>
+						{#if p.id === room.hostId}<span class="host-tag">HOST</span>{/if}
 						{#if p.id === playerId}<span class="you">you</span>{/if}
 						{#if !p.isConnected}
 							<span class="tag-offline">RECONNECTING</span>
 						{:else}
 							<span class="tag-online">ONLINE</span>
+						{/if}
+						{#if isHost && p.id !== playerId}
+							<button class="kick-btn" type="button" onclick={() => kickPlayer(p.id)}>踢出</button>
 						{/if}
 					</li>
 				{/each}
@@ -428,10 +453,16 @@
 					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
 						<span class="dot sm" class:on={p.isArmed} class:offline={!p.isConnected}></span>
 						{p.name}
+						{#if p.id === room.hostId}<span class="host-tag mini">HOST</span>{/if}
 						{#if !p.isConnected}
 							<span class="tag-offline">offline</span>
 						{:else if p.hasLogged}
 							<span class="tag-logged">logged</span>
+						{/if}
+						{#if isHost && p.id !== playerId}
+							<button class="kick-btn mini" type="button" onclick={() => kickPlayer(p.id)}
+								>踢出</button
+							>
 						{/if}
 					</li>
 				{/each}
@@ -504,10 +535,16 @@
 				{#each room.players as p (p.id)}
 					<li class:me={p.id === playerId} class:offline={!p.isConnected}>
 						{p.name}
+						{#if p.id === room.hostId}<span class="host-tag mini">HOST</span>{/if}
 						{#if !p.isConnected}
 							<span class="tag-offline">offline</span>
 						{:else if p.wantsRestart}
 							<span class="tag-restart">restart</span>
+						{/if}
+						{#if isHost && p.id !== playerId}
+							<button class="kick-btn mini" type="button" onclick={() => kickPlayer(p.id)}
+								>踢出</button
+							>
 						{/if}
 					</li>
 				{/each}
@@ -755,6 +792,20 @@
 		font-size: 0.68rem;
 	}
 
+	.host-tag {
+		border: 1px solid rgba(73, 211, 255, 0.36);
+		border-radius: 999px;
+		color: #49d3ff;
+		padding: 0.12rem 0.4rem;
+		font-size: 0.64rem;
+		font-weight: 900;
+	}
+
+	.host-tag.mini {
+		padding: 0.05rem 0.3rem;
+		font-size: 0.58rem;
+	}
+
 	.tag-online,
 	.tag-offline {
 		margin-left: auto;
@@ -768,6 +819,28 @@
 
 	.tag-offline {
 		color: #ffbf57;
+	}
+
+	.kick-btn {
+		flex-shrink: 0;
+		border: 1px solid rgba(255, 105, 97, 0.4);
+		border-radius: 6px;
+		color: #ff6961;
+		cursor: pointer;
+		background: rgba(255, 105, 97, 0.08);
+		padding: 0.32rem 0.48rem;
+		font-size: 0.68rem;
+		font-weight: 900;
+	}
+
+	.kick-btn:not(:disabled):hover {
+		border-color: #ff6961;
+		background: rgba(255, 105, 97, 0.16);
+	}
+
+	.kick-btn.mini {
+		padding: 0.12rem 0.32rem;
+		font-size: 0.6rem;
 	}
 
 	.packet-window {

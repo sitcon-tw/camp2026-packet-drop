@@ -40,6 +40,7 @@
 	function makeEmptyRoom(roomId: string): AdminRoomState {
 		return {
 			roomId,
+			hostId: null,
 			phase: 'lobby',
 			round: 0,
 			gameRound: 0,
@@ -271,6 +272,9 @@
 						<li class:offline={!player.isConnected}>
 							<span class="dot" class:on={player.isConnected || player.isArmed}></span>
 							<span>{player.name}</span>
+							{#if player.id === room.hostId}
+								<em>host</em>
+							{/if}
 							{#if !player.isConnected}
 								<em>offline</em>
 							{:else if player.isArmed}

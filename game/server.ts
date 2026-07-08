@@ -148,6 +148,9 @@ const server = Bun.serve<WsData>({
 				case 'join':
 					room.addPlayer(playerId, ws as never);
 					break;
+				case 'kick_player':
+					room.kickPlayer(playerId, String(msg.playerId ?? ''));
+					break;
 				case 'log_fragment':
 					room.logFragment(playerId, String(msg.text ?? ''));
 					break;

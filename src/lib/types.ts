@@ -25,6 +25,7 @@ export interface Player {
 
 export interface RoomState {
 	roomId: string;
+	hostId: string | null;
 	phase: Phase;
 	round: number; // retransmit round within current question
 	gameRound: number; // 1 = Q1 (sentence), 2 = Q2 (clues)
@@ -44,6 +45,7 @@ export interface RoomState {
 
 export type ClientMsg =
 	| { type: 'join'; playerName?: string }
+	| { type: 'kick_player'; playerId: string }
 	| { type: 'log_fragment'; text: string }
 	| { type: 'select_fragment_choice'; choiceId: string }
 	| { type: 'arm_ack' }
@@ -53,6 +55,7 @@ export type ClientMsg =
 
 export interface AdminRoomState {
 	roomId: string;
+	hostId: string | null;
 	phase: Phase;
 	round: number;
 	gameRound: number;
@@ -82,6 +85,7 @@ export type AdminClientMsg =
 export type ServerMsg =
 	| { type: 'welcome'; playerId: string }
 	| { type: 'state'; room: RoomState }
+	| { type: 'kicked'; roomId: string }
 	| { type: 'inbox'; fragment: Fragment }
 	| { type: 'choice_set'; fragId: string; choices: FragmentChoice[] }
 	| { type: 'choice_wrong'; penalty: number }

@@ -239,6 +239,7 @@ export class Room {
 		const existing = this.state.players.find((p) => p.id === playerId);
 		if (existing) {
 			existing.isConnected = true;
+			this.ensureHost();
 			this.resync(playerId);
 			this.broadcastState();
 			return;
@@ -257,6 +258,7 @@ export class Room {
 			isArmed: false,
 			wantsRestart: false
 		});
+		this.ensureHost();
 		this.broadcastState();
 	}
 
@@ -286,10 +288,34 @@ export class Room {
 			isArmed: false,
 			wantsRestart: false
 		}));
+		const hostId = players.find((p) => p.id === this.state.hostId && p.isConnected)?.id ?? null;
 		this.resetRoom();
 		this.state.players = players;
+		this.state.hostId = hostId;
+		this.ensureHost();
 		this.broadcastState();
 		return { ok: true };
+	}
+
+	kickPlayer(hostId: string, targetId: string): void {
+		if (hostId !== this.state.hostId) {
+			this.send(hostId, { type: 'error', message: '只有房主可以踢人' });
+			return;
+		}
+		if (hostId === targetId) {
+			this.send(hostId, { type: 'error', message: '房主不能踢自己' });
+			return;
+		}
+		const target = this.findPlayer(targetId);
+		if (!target) return;
+		this.send(targetId, { type: 'kicked', roomId: this.state.roomId });
+		this.removePlayerNow(targetId);
+		this.broadcastAll({
+			type: 'toast',
+			text: `${target.name} 已被房主移出房間`,
+			kind: 'info'
+		});
+		this.broadcastState();
 	}
 
 	logFragment(playerId: string, text: string): void {
@@ -422,14 +448,12 @@ export class Room {
 			p.isConnected = false;
 			p.isArmed = false;
 		}
-		this.armTime.delete(playerId);
-		const disarmTimer = this.disarmTimers.get(playerId);
-		if (disarmTimer) clearTimeout(disarmTimer);
-		this.disarmTimers.delete(playerId);
+		this.clearPlayerRuntime(playerId);
 
 		if (this.state.phase === 'lobby') {
 			this.schedulePlayerRemoval(playerId);
 		}
+		this.ensureHost();
 		if (this.wsMap.size === 0) {
 			if (this.state.phase !== 'complete') this.scheduleRoomReset();
 			return;
@@ -458,6 +482,7 @@ export class Room {
 	private freshState(roomId: string): RoomState {
 		return {
 			roomId,
+			hostId: null,
 			phase: 'lobby',
 			round: 0,
 			gameRound: 0,
@@ -686,15 +711,44 @@ export class Room {
 		const timer = setTimeout(() => {
 			this.playerRemovalTimers.delete(playerId);
 			if (this.wsMap.has(playerId) || this.state.phase !== 'lobby') return;
-			this.state.players = this.state.players.filter((p) => p.id !== playerId);
-			this.playerInboxes.delete(playerId);
-			this.choiceCooldown.delete(playerId);
-			const choiceTimer = this.choiceTimers.get(playerId);
-			if (choiceTimer) clearTimeout(choiceTimer);
-			this.choiceTimers.delete(playerId);
+			this.removePlayerNow(playerId);
 			this.broadcastState();
 		}, CONFIG.reconnect_grace_ms);
 		this.playerRemovalTimers.set(playerId, timer);
+	}
+
+	private removePlayerNow(playerId: string): void {
+		this.wsMap.delete(playerId);
+		this.state.players = this.state.players.filter((p) => p.id !== playerId);
+		this.clearPlayerRuntime(playerId);
+		this.cancelPlayerRemoval(playerId);
+		this.ensureHost();
+		if (this.state.players.length === 0 && this.state.phase !== 'complete') {
+			this.scheduleRoomReset();
+		}
+	}
+
+	private clearPlayerRuntime(playerId: string): void {
+		this.playerInboxes.delete(playerId);
+		this.choiceCooldown.delete(playerId);
+		this.armTime.delete(playerId);
+		const disarmTimer = this.disarmTimers.get(playerId);
+		if (disarmTimer) clearTimeout(disarmTimer);
+		this.disarmTimers.delete(playerId);
+		const choiceTimer = this.choiceTimers.get(playerId);
+		if (choiceTimer) clearTimeout(choiceTimer);
+		this.choiceTimers.delete(playerId);
+		this.clearChoiceAfkTimer(playerId);
+	}
+
+	private ensureHost(): void {
+		if (
+			this.state.hostId &&
+			this.state.players.some((p) => p.id === this.state.hostId && p.isConnected)
+		) {
+			return;
+		}
+		this.state.hostId = this.state.players.find((p) => p.isConnected)?.id ?? null;
 	}
 
 	private cancelPlayerRemoval(playerId: string): void {
@@ -749,6 +803,7 @@ export class Room {
 	getAdminState(): AdminRoomState {
 		return {
 			roomId: this.state.roomId,
+			hostId: this.state.hostId,
 			phase: this.state.phase,
 			round: this.state.round,
 			gameRound: this.state.gameRound,
