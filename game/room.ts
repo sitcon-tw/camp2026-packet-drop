@@ -64,6 +64,7 @@ const CHAR_SWAPS: [string, string[]][] = [
 	['左', ['右', '佐', '在']],
 	['右', ['左', '佑', '又']]
 ];
+const CHOICE_TOTAL = 4;
 
 function corrupt(s: string): string {
 	const c = CONFIG.corrupt_chars;
@@ -87,6 +88,10 @@ function shuffle<T>(arr: T[]): T[] {
 
 function normalize(s: string): string {
 	return s.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function choiceTextKey(s: string): string {
+	return s.normalize('NFKC').trim().replace(/\s+/g, ' ');
 }
 
 function choiceId(): string {
@@ -142,10 +147,15 @@ function mutateByChars(text: string): string[] {
 
 function buildChoiceTexts(correct: string, allFragments: InternalFrag[]): string[] {
 	const choices = new Set<string>();
+	const choiceKeys = new Set<string>([choiceTextKey(correct)]);
 	const add = (value: unknown) => {
 		if (typeof value !== 'string') return;
 		const text = value.trim();
-		if (text && text !== correct) choices.add(text);
+		const key = choiceTextKey(text);
+		if (text && !choiceKeys.has(key)) {
+			choices.add(text);
+			choiceKeys.add(key);
+		}
 	};
 
 	mutateByName(correct).forEach(add);
@@ -160,12 +170,12 @@ function buildChoiceTexts(correct: string, allFragments: InternalFrag[]): string
 		.forEach(add);
 
 	let fallbackIndex = 1;
-	while (choices.size < Math.max(0, CONFIG.choice_count - 1)) {
+	while (choices.size < CHOICE_TOTAL - 1) {
 		add(`${correct} ${fallbackIndex}`);
 		fallbackIndex++;
 	}
 
-	return shuffle([...choices]).slice(0, Math.max(0, CONFIG.choice_count - 1));
+	return shuffle([...choices]).slice(0, CHOICE_TOTAL - 1);
 }
 
 function buildChoices(
@@ -176,10 +186,19 @@ function buildChoices(
 	correctChoiceId: string;
 } {
 	const correctChoice = { id: choiceId(), text: correct };
-	const distractors = buildChoiceTexts(correct, allFragments).map((text) => ({
-		id: choiceId(),
-		text
-	}));
+	const uniqueTexts = new Set<string>([choiceTextKey(correct)]);
+	const distractors = buildChoiceTexts(correct, allFragments)
+		.filter((text) => {
+			const key = choiceTextKey(text);
+			if (uniqueTexts.has(key)) return false;
+			uniqueTexts.add(key);
+			return true;
+		})
+		.slice(0, CHOICE_TOTAL - 1)
+		.map((text) => ({
+			id: choiceId(),
+			text
+		}));
 	return {
 		choices: shuffle([correctChoice, ...distractors]),
 		correctChoiceId: correctChoice.id

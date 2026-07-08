@@ -153,7 +153,6 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 | `WS_PORT`              | Bun WebSocket port                               | `8080`  |
 | `ADMIN_TOKEN`          | Token required by `/admin` control channel       | _unset_ |
 | `REVEAL_MS`            | How long a fragment stays visible (flash window) | `15000` |
-| `CHOICE_COUNT`         | Number of similar fragment options shown         | `8`     |
 | `CHOICE_WRONG_PENALTY` | ms cooldown after a wrong fragment choice        | `1200`  |
 | `RECONNECT_GRACE_MS`   | ms to preserve a player slot after refresh       | `5000`  |
 | `T_ACK`                | ms a player stays armed (all must overlap)       | `3000`  |

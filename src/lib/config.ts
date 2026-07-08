@@ -9,7 +9,6 @@ export const CONFIG = {
 	corrupt_chars: '▓░█▒■□▪▫●○◆◇✕✗',
 	// How long a delivered fragment stays visible before it vanishes (client flash window)
 	reveal_ms: parseInt(process.env['REVEAL_MS'] ?? '15000'),
-	choice_count: parseInt(process.env['CHOICE_COUNT'] ?? '8'),
 	choice_wrong_penalty: parseInt(process.env['CHOICE_WRONG_PENALTY'] ?? '1200'),
 	// AFK timeout for Q2 (clues) choice selection in ms; 0 = disabled
 	choice_afk_ms: parseInt(process.env['CHOICE_AFK_MS'] ?? '0'),
