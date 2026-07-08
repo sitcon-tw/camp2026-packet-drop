@@ -215,7 +215,6 @@ export class Room {
 	private internalFrags: InternalFrag[] = [];
 	private playerInboxes = new Map<string, PlayerInbox>();
 	private wsMap = new Map<string, WS>();
-	private submitCooldown = new Map<string, number>();
 	private choiceCooldown = new Map<string, number>();
 	private armTime = new Map<string, number>();
 	private disarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -373,7 +372,7 @@ export class Room {
 	submitAnswer(playerId: string, text: string): void {
 		if (this.state.phase !== 'answer' || !this.currentMessage) return;
 		if (this.roundTimer) return;
-		const coolUntil = this.submitCooldown.get(playerId) ?? 0;
+		const coolUntil = this.state.answerCooldownUntil;
 		if (Date.now() < coolUntil) {
 			this.send(playerId, { type: 'error', message: '提交冷卻中' });
 			return;
@@ -390,9 +389,14 @@ export class Room {
 				}, 1500);
 			}
 		} else {
-			this.submitCooldown.set(playerId, Date.now() + CONFIG.wrong_submit_penalty);
-			this.send(playerId, { type: 'answer_wrong', penalty: CONFIG.wrong_submit_penalty });
-			this.send(playerId, { type: 'toast', text: '答案錯誤，冷卻中…', kind: 'error' });
+			this.state.answerCooldownUntil = Date.now() + CONFIG.wrong_submit_penalty;
+			this.broadcastAll({
+				type: 'answer_wrong',
+				penalty: CONFIG.wrong_submit_penalty,
+				cooldownUntil: this.state.answerCooldownUntil
+			});
+			this.broadcastAll({ type: 'toast', text: '答案錯誤，整隊冷卻中…', kind: 'error' });
+			this.broadcastState();
 		}
 	}
 
@@ -462,6 +466,7 @@ export class Room {
 			buffer: [],
 			totalFragments: 0,
 			revealMs: CONFIG.reveal_ms,
+			answerCooldownUntil: 0,
 			questionType: null,
 			prompt: null,
 			startedAt: null,
@@ -502,7 +507,7 @@ export class Room {
 		this.state.prompt = null;
 		this.state.round = 0;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
-		this.submitCooldown.clear();
+		this.state.answerCooldownUntil = 0;
 		this.choiceCooldown.clear();
 		this.distributeFragments();
 	}
@@ -523,7 +528,7 @@ export class Room {
 		this.state.buffer = Array(this.state.totalFragments).fill(null);
 		this.state.prompt = null;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
-		this.submitCooldown.clear();
+		this.state.answerCooldownUntil = 0;
 		this.choiceCooldown.clear();
 		this.broadcastAll({ type: 'toast', text: '全員同意，重新開始本題 ↻', kind: 'info' });
 		this.distributeFragments();
@@ -615,7 +620,7 @@ export class Room {
 		this.state.phase = 'answer';
 		this.state.prompt = this.currentMessage?.prompt ?? null;
 		this.state.players.forEach((p) => (p.wantsRestart = false));
-		this.submitCooldown.clear();
+		this.state.answerCooldownUntil = 0;
 		this.broadcastAll({ type: 'toast', text: '筆記收集完成，開始作答', kind: 'success' });
 		this.broadcastState();
 	}
@@ -666,10 +671,7 @@ export class Room {
 			return;
 		inbox.choiceSent = true;
 		this.send(playerId, { type: 'choice_set', fragId: inbox.fragId, choices: inbox.choices });
-		if (
-			CONFIG.choice_afk_ms > 0 &&
-			this.state.questionType === 'clues'
-		) {
+		if (CONFIG.choice_afk_ms > 0 && this.state.questionType === 'clues') {
 			this.clearChoiceAfkTimer(playerId);
 			const afkTimer = setTimeout(() => {
 				this.choiceAfkTimers.delete(playerId);
@@ -686,7 +688,6 @@ export class Room {
 			if (this.wsMap.has(playerId) || this.state.phase !== 'lobby') return;
 			this.state.players = this.state.players.filter((p) => p.id !== playerId);
 			this.playerInboxes.delete(playerId);
-			this.submitCooldown.delete(playerId);
 			this.choiceCooldown.delete(playerId);
 			const choiceTimer = this.choiceTimers.get(playerId);
 			if (choiceTimer) clearTimeout(choiceTimer);
@@ -729,7 +730,6 @@ export class Room {
 		this.currentMessage = null;
 		this.internalFrags = [];
 		this.playerInboxes.clear();
-		this.submitCooldown.clear();
 		this.choiceCooldown.clear();
 		this.armTime.clear();
 		this.clearDisarmTimers();

@@ -15,6 +15,7 @@
 	let toasts = $state<{ id: number; text: string; kind: string }[]>([]);
 	let submitCooldownUntil = $state(0);
 	let choiceCooldownUntil = $state(0);
+	let now = $state(Date.now());
 	let wsReady = $state(false);
 	let answerInput = $state('');
 	let choices = $state<FragmentChoice[]>([]);
@@ -31,7 +32,9 @@
 
 	// ── derived ──────────────────────────────────────────────────
 	const me = $derived(room?.players.find((p) => p.id === playerId));
-	const cooldownActive = $derived(submitCooldownUntil > Date.now());
+	const submitCooldownEnd = $derived(Math.max(submitCooldownUntil, room?.answerCooldownUntil ?? 0));
+	const cooldownActive = $derived(submitCooldownEnd > now);
+	const cooldownRemaining = $derived(Math.max(0, Math.ceil((submitCooldownEnd - now) / 1000)));
 	const choiceCooldownActive = $derived(choiceCooldownUntil > Date.now());
 	const armedCount = $derived(room?.players.filter((p) => p.isArmed).length ?? 0);
 	const filledCount = $derived(room?.buffer.filter((b) => b !== null).length ?? 0);
@@ -69,6 +72,13 @@
 	);
 
 	// ── WS lifecycle ─────────────────────────────────────────────
+	$effect(() => {
+		const tick = setInterval(() => {
+			now = Date.now();
+		}, 250);
+		return () => clearInterval(tick);
+	});
+
 	$effect(() => {
 		const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
 		const storedPid = sessionStorage.getItem(`pid:${roomId}`);
@@ -117,7 +127,9 @@
 					break;
 				case 'answer_wrong': {
 					const penalty = msg.penalty as number;
-					submitCooldownUntil = Date.now() + penalty;
+					const cooldownUntil =
+						typeof msg.cooldownUntil === 'number' ? msg.cooldownUntil : Date.now() + penalty;
+					submitCooldownUntil = cooldownUntil;
 					setTimeout(() => {
 						submitCooldownUntil = 0;
 					}, penalty);
@@ -473,7 +485,7 @@
 					onclick={submitAnswer}
 					disabled={cooldownActive || !answerInput.trim()}
 				>
-					{cooldownActive ? '冷卻中' : 'SUBMIT'}
+					{cooldownActive ? `冷卻中 ${cooldownRemaining}s` : 'SUBMIT'}
 				</button>
 			</div>
 

@@ -34,6 +34,7 @@ export interface RoomState {
 	buffer: (string | null)[];
 	totalFragments: number;
 	revealMs: number; // how long a fragment stays visible before it vanishes
+	answerCooldownUntil: number; // team-wide answer submit cooldown timestamp
 	questionType: QuestionType | null;
 	prompt: string | null; // answer-phase question text
 	startedAt: number | null;
@@ -87,7 +88,7 @@ export type ServerMsg =
 	| { type: 'choice_expired' }
 	| { type: 'log_ok' }
 	| { type: 'log_reject'; reason: string }
-	| { type: 'answer_wrong'; penalty: number }
+	| { type: 'answer_wrong'; penalty: number; cooldownUntil: number }
 	| { type: 'complete' }
 	| { type: 'error'; message: string }
 	| { type: 'toast'; text: string; kind: 'info' | 'success' | 'error' }

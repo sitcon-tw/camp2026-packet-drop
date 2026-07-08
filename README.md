@@ -129,7 +129,7 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 - **Answer phase** shows the question `prompt` and the collected notes (joined for sentence, listed for clues). The true payload is **not** re-shown — you answer from your notes.
 - **Submit** ⇒ server compares `normalize(answer)` (trim, collapse whitespace, uppercase).
   - Correct ⇒ advance to the next question, or **COMPLETE** after Q2.
-  - Wrong ⇒ short cooldown (`WRONG_PENALTY`), stay in answer.
+  - Wrong ⇒ whole-team cooldown (`WRONG_PENALTY`, default 15 s), stay in answer.
 - **重新開始 (restart):** any player can vote; when **all `N` players have voted**, the **current question** resets — notes cleared, fresh fragments re-flashed. Use it when the notes are too incomplete to answer.
 
 | TCP concept                  | The matching game mechanic                                                                                                                      |
@@ -158,7 +158,7 @@ To trigger a retransmit, **all `N` players must be armed at the same instant**.
 | `T_ACK`                | ms a player stays armed (all must overlap)       | `3000`  |
 | `CORRUPTION_CHANCE`    | Per-fragment corruption probability `0.0–1.0`    | `0.4`   |
 | `GUARANTEE_CORRUPT`    | Force ≥1 corruption in round 1                   | `true`  |
-| `WRONG_PENALTY`        | ms cooldown after a wrong answer                 | `3000`  |
+| `WRONG_PENALTY`        | ms team cooldown after a wrong answer            | `15000` |
 
 > Questions per game is fixed at **2** (`MAX_ROUNDS` in `src/lib/config.ts`).
 
