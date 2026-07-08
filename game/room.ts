@@ -239,7 +239,6 @@ export class Room {
 		const existing = this.state.players.find((p) => p.id === playerId);
 		if (existing) {
 			existing.isConnected = true;
-			this.ensureHost();
 			this.resync(playerId);
 			this.broadcastState();
 			return;
@@ -258,7 +257,6 @@ export class Room {
 			isArmed: false,
 			wantsRestart: false
 		});
-		this.ensureHost();
 		this.broadcastState();
 	}
 
@@ -288,31 +286,20 @@ export class Room {
 			isArmed: false,
 			wantsRestart: false
 		}));
-		const hostId = players.find((p) => p.id === this.state.hostId && p.isConnected)?.id ?? null;
 		this.resetRoom();
 		this.state.players = players;
-		this.state.hostId = hostId;
-		this.ensureHost();
 		this.broadcastState();
 		return { ok: true };
 	}
 
-	kickPlayer(hostId: string, targetId: string): void {
-		if (hostId !== this.state.hostId) {
-			this.send(hostId, { type: 'error', message: '只有房主可以踢人' });
-			return;
-		}
-		if (hostId === targetId) {
-			this.send(hostId, { type: 'error', message: '房主不能踢自己' });
-			return;
-		}
+	kickPlayerByAdmin(targetId: string): void {
 		const target = this.findPlayer(targetId);
 		if (!target) return;
 		this.send(targetId, { type: 'kicked', roomId: this.state.roomId });
 		this.removePlayerNow(targetId);
 		this.broadcastAll({
 			type: 'toast',
-			text: `${target.name} 已被房主移出房間`,
+			text: `${target.name} 已被管理員移出房間`,
 			kind: 'info'
 		});
 		this.broadcastState();
@@ -453,7 +440,6 @@ export class Room {
 		if (this.state.phase === 'lobby') {
 			this.schedulePlayerRemoval(playerId);
 		}
-		this.ensureHost();
 		if (this.wsMap.size === 0) {
 			if (this.state.phase !== 'complete') this.scheduleRoomReset();
 			return;
@@ -482,7 +468,6 @@ export class Room {
 	private freshState(roomId: string): RoomState {
 		return {
 			roomId,
-			hostId: null,
 			phase: 'lobby',
 			round: 0,
 			gameRound: 0,
@@ -722,7 +707,6 @@ export class Room {
 		this.state.players = this.state.players.filter((p) => p.id !== playerId);
 		this.clearPlayerRuntime(playerId);
 		this.cancelPlayerRemoval(playerId);
-		this.ensureHost();
 		if (this.state.players.length === 0 && this.state.phase !== 'complete') {
 			this.scheduleRoomReset();
 		}
@@ -739,16 +723,6 @@ export class Room {
 		if (choiceTimer) clearTimeout(choiceTimer);
 		this.choiceTimers.delete(playerId);
 		this.clearChoiceAfkTimer(playerId);
-	}
-
-	private ensureHost(): void {
-		if (
-			this.state.hostId &&
-			this.state.players.some((p) => p.id === this.state.hostId && p.isConnected)
-		) {
-			return;
-		}
-		this.state.hostId = this.state.players.find((p) => p.isConnected)?.id ?? null;
 	}
 
 	private cancelPlayerRemoval(playerId: string): void {
@@ -803,7 +777,6 @@ export class Room {
 	getAdminState(): AdminRoomState {
 		return {
 			roomId: this.state.roomId,
-			hostId: this.state.hostId,
 			phase: this.state.phase,
 			round: this.state.round,
 			gameRound: this.state.gameRound,

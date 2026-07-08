@@ -137,6 +137,13 @@ const server = Bun.serve<WsData>({
 						}
 						break;
 					}
+					case 'admin_kick_player': {
+						const roomId = String(msg.roomId ?? '').trim();
+						const playerId = String(msg.playerId ?? '').trim();
+						if (!roomId || !playerId) break;
+						getRoom(roomId).kickPlayerByAdmin(playerId);
+						break;
+					}
 				}
 				return;
 			}
@@ -147,9 +154,6 @@ const server = Bun.serve<WsData>({
 			switch (msg.type) {
 				case 'join':
 					room.addPlayer(playerId, ws as never);
-					break;
-				case 'kick_player':
-					room.kickPlayer(playerId, String(msg.playerId ?? ''));
 					break;
 				case 'log_fragment':
 					room.logFragment(playerId, String(msg.text ?? ''));

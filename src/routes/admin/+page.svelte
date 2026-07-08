@@ -40,7 +40,6 @@
 	function makeEmptyRoom(roomId: string): AdminRoomState {
 		return {
 			roomId,
-			hostId: null,
 			phase: 'lobby',
 			round: 0,
 			gameRound: 0,
@@ -120,6 +119,12 @@
 	function clearRecord(roomId: string) {
 		errorText = '';
 		wsRef?.send(JSON.stringify({ type: 'admin_clear_record', roomId }));
+	}
+
+	function kickPlayer(roomId: string, playerId: string, playerName: string) {
+		errorText = '';
+		if (!confirm(`要將 ${playerName} 從 ROOM ${roomId} 移出嗎？`)) return;
+		wsRef?.send(JSON.stringify({ type: 'admin_kick_player', roomId, playerId }));
 	}
 
 	function formatTime(value: number | null) {
@@ -271,10 +276,7 @@
 					{#each room.players as player (player.id)}
 						<li class:offline={!player.isConnected}>
 							<span class="dot" class:on={player.isConnected || player.isArmed}></span>
-							<span>{player.name}</span>
-							{#if player.id === room.hostId}
-								<em>host</em>
-							{/if}
+							<span class="player-name">{player.name}</span>
 							{#if !player.isConnected}
 								<em>offline</em>
 							{:else if player.isArmed}
@@ -282,6 +284,14 @@
 							{:else if player.hasLogged}
 								<em>logged</em>
 							{/if}
+							<button
+								class="player-kick"
+								type="button"
+								onclick={() => kickPlayer(room.roomId, player.id, player.name)}
+								disabled={!connected}
+							>
+								踢出
+							</button>
 						</li>
 					{/each}
 				</ul>
@@ -641,11 +651,39 @@
 
 	.player-list em,
 	.ranking-list em {
-		margin-left: auto;
 		color: #ffbf57;
 		font-size: 0.68rem;
 		font-style: normal;
 		font-weight: 800;
+	}
+
+	.ranking-list em {
+		margin-left: auto;
+	}
+
+	.player-name {
+		margin-right: auto;
+	}
+
+	.player-kick {
+		border: 1px solid rgba(255, 105, 97, 0.45);
+		border-radius: 6px;
+		color: #ff6961;
+		cursor: pointer;
+		background: rgba(255, 105, 97, 0.08);
+		padding: 0.25rem 0.45rem;
+		font-size: 0.68rem;
+		font-weight: 900;
+	}
+
+	.player-kick:disabled {
+		opacity: 0.42;
+		cursor: not-allowed;
+	}
+
+	.player-kick:not(:disabled):hover {
+		border-color: #ff6961;
+		background: rgba(255, 105, 97, 0.16);
 	}
 
 	.dot {
