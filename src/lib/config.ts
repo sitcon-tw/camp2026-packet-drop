@@ -16,8 +16,8 @@ export const CONFIG = {
 	reconnect_grace_ms: parseInt(process.env['RECONNECT_GRACE_MS'] ?? '5000')
 };
 
-// Only TWO questions per game: a sentence-memory round, then a logic-clue round.
-export const MAX_ROUNDS = 2;
+// Three questions per game: a sentence-memory round, then two logic-clue rounds.
+export const MAX_ROUNDS = 3;
 
 export type QuestionType = 'sentence' | 'clues';
 
@@ -29,7 +29,7 @@ export interface SentenceQuestion {
 	answer: string; // expected answer (normalized compare)
 }
 
-// Q2: a logic puzzle whose CLUES are the fragments, flashed, then recognized from choices.
+// Logic puzzles whose CLUES are the fragments, flashed, then recognized from choices.
 export interface CluesQuestion {
 	type: 'clues';
 	clues: string[]; // each clue is one fragment, distributed across players
@@ -74,7 +74,11 @@ export const Q2_POOL: CluesQuestion[] = [
 		],
 		prompt: 'CC 的右手邊是誰？',
 		answer: 'Tang'
-	},
+	}
+];
+
+// ── Q3 pool: second scattered logic-clue puzzle ────────────────────────────
+export const Q3_POOL: CluesQuestion[] = [
 	{
 		type: 'clues',
 		clues: [

@@ -5,7 +5,7 @@ import type {
 	Player,
 	RoomState
 } from '../src/lib/types.js';
-import { CONFIG, MAX_ROUNDS, Q1_POOL, Q2_POOL, type Question } from '../src/lib/config.js';
+import { CONFIG, MAX_ROUNDS, Q1_POOL, Q2_POOL, Q3_POOL, type Question } from '../src/lib/config.js';
 
 interface InternalFrag {
 	id: string;
@@ -489,7 +489,8 @@ export class Room {
 		this.cancelRoomReset();
 		const q1 = shuffle([...Q1_POOL])[0];
 		const q2 = shuffle([...Q2_POOL])[0];
-		this.questions = [q1, q2];
+		const q3 = shuffle([...Q3_POOL])[0];
+		this.questions = [q1, q2, q3];
 		this.state.gameRound = 0;
 		this.state.startedAt = Date.now();
 		this.state.completedAt = null;
